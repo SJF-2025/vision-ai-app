@@ -5,3 +5,7 @@ pillow==10.4.0
 torch==2.7.0
 torchvision==0.22.0
 python-multipart==0.0.9
+opencv-python-headless==4.10.0.84
+yt-dlp==2025.01.15
+imageio-ffmpeg==0.5.1
+imageio==2.35.1

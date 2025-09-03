@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { FiCamera } from "react-icons/fi";
 import { Select, SelectItem, FileUploaderDropContainer, FileUploaderItem, Button, TextInput, FormLabel } from "@carbon/react";
+import { CheckmarkFilled } from "@carbon/icons-react";
 
 export default function Home() {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
@@ -15,8 +16,10 @@ export default function Home() {
   const [youtubeUrl, setYoutubeUrl] = useState<string>("");
   const [weightSourceKind, setWeightSourceKind] = useState<"local" | "external">("local");
   const [youTubeVideoId, setYouTubeVideoId] = useState<string>("");
+  const wsRef = useRef<WebSocket | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [drawMeta, setDrawMeta] = useState({
     scale: 1,
@@ -27,6 +30,8 @@ export default function Home() {
     containerW: 0,
     containerH: 0,
   });
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [liveOverlay, setLiveOverlay] = useState(false);
 
   useEffect(() => {
     const candidates = [
@@ -100,11 +105,12 @@ export default function Home() {
   const recomputeDrawMeta = () => {
     const container = containerRef.current;
     const img = imgRef.current;
-    if (!container || !img) return;
+    const vid = videoRef.current;
+    if (!container) return;
     const cw = container.clientWidth;
     const ch = container.clientHeight;
-    const nw = (img as HTMLImageElement).naturalWidth || 0;
-    const nh = (img as HTMLImageElement).naturalHeight || 0;
+    const nw = vid && vid.videoWidth ? vid.videoWidth : (img ? img.naturalWidth : 0);
+    const nh = vid && vid.videoHeight ? vid.videoHeight : (img ? img.naturalHeight : 0);
     if (!nw || !nh || !cw || !ch) return;
     const scale = Math.min(cw / nw, ch / nh);
     const dispW = nw * scale;
@@ -151,6 +157,75 @@ export default function Home() {
       setVideoUrl("");
     }
   }, [sourceKind]);
+  // Live overlay detection loop for local video
+  useEffect(() => {
+    if (!(isPlaying && liveOverlay && sourceKind === "local" && videoRef.current)) return;
+    let cancelled = false;
+    let lastSent = 0;
+    const canvas = document.createElement("canvas");
+    const vid = videoRef.current!;
+    const tick = async () => {
+      if (cancelled) return;
+      const now = performance.now();
+      if (now - lastSent < 450) {
+        requestAnimationFrame(tick);
+        return;
+      }
+      if (vid.videoWidth && vid.videoHeight) {
+        canvas.width = vid.videoWidth;
+        canvas.height = vid.videoHeight;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+          const blob: Blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b as Blob), "image/jpeg", 0.8)!);
+          const form = new FormData();
+          form.append("file", new File([blob], "frame.jpg", { type: "image/jpeg" }));
+          const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
+          try {
+            const res = await fetch(`http://localhost:8002/predict${q}`, { method: "POST", body: form });
+            const data = await res.json();
+            if (!cancelled) setBoxes(Array.isArray(data?.objects) ? data.objects : []);
+          } catch {
+            // ignore transient errors
+          }
+        }
+      }
+      lastSent = now;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, liveOverlay, selectedWeight, sourceKind]);
+
+  // Live detection via backend WS for YouTube
+  useEffect(() => {
+    if (!(sourceKind === "youtube" && youTubeVideoId && liveOverlay)) {
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch {}
+        wsRef.current = null;
+      }
+      return;
+    }
+    const url = `ws://localhost:8002/ws/youtube${selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : ""}`;
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ url: `https://www.youtube.com/watch?v=${youTubeVideoId}` }));
+    };
+    ws.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (Array.isArray(data?.objects)) setBoxes(data.objects);
+      } catch {}
+    };
+    ws.onerror = () => {};
+    ws.onclose = () => { wsRef.current = null; };
+    return () => { try { ws.close(); } catch {} };
+  }, [sourceKind, youTubeVideoId, liveOverlay, selectedWeight]);
+
   return (
     <main style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh - 48px)" }}>
       <section
@@ -181,7 +256,7 @@ export default function Home() {
             }}
           >
             <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%" }}>
-              {imageUrl ? (
+              {imageUrl && sourceKind !== "youtube" ? (
                 <img
                   ref={imgRef}
                   src={imageUrl}
@@ -190,10 +265,28 @@ export default function Home() {
                   onLoad={() => recomputeDrawMeta()}
                 />
               ) : videoUrl ? (
-                <video
-                  src={videoUrl}
-                  style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
-                  controls
+                <div style={{ position: "relative", width: "100%", height: "100%" }}>
+                  <video
+                    ref={videoRef}
+                    src={videoUrl}
+                    style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
+                    onLoadedMetadata={() => { recomputeDrawMeta(); }}
+                    onPlay={() => { setIsPlaying(true); }}
+                    onPause={() => { setIsPlaying(false); }}
+                    controls={false}
+                  />
+                  <div style={{ position: "absolute", left: 12, bottom: 12 }}>
+                    <Button size="sm" kind="tertiary" onClick={() => {
+                      const v = videoRef.current; if (!v) return; if (v.paused) { v.play(); } else { v.pause(); }
+                    }}>{videoRef.current && !videoRef.current.paused ? "Pause" : "Play"}</Button>
+                  </div>
+                </div>
+              ) : youTubeVideoId ? (
+                <iframe
+                  src={`https://www.youtube.com/embed/${youTubeVideoId}?rel=0&modestbranding=1&autoplay=${isPlaying ? 1 : 0}`}
+                  style={{ width: "100%", height: "100%", border: 0, background: "#000" }}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
                 />
               ) : (
                 sourceKind === "youtube" ? (
@@ -232,21 +325,27 @@ export default function Home() {
                   </div>
                 )
               )}
-              {/* Draw boxes */}
-              {boxes.map((d, idx) => {
-                const [x1, y1, x2, y2] = d.box;
-                const left = drawMeta.offsetX + x1 * drawMeta.scale;
-                const top = drawMeta.offsetY + y1 * drawMeta.scale;
-                const width = (x2 - x1) * drawMeta.scale;
-                const height = (y2 - y1) * drawMeta.scale;
-                return (
-                  <div key={idx} style={{ position: "absolute", left, top, width, height, border: "2px solid #0f62fe" }}>
-                    <div style={{ position: "absolute", left: 0, top: -20, background: "#0f62fe", color: "#fff", fontSize: 12, padding: "2px 4px" }}>
-                      {d.label} {(d.confidence * 100).toFixed(1)}%
+              {/* For YouTube, load hidden thumbnail to compute scaling */}
+              {youTubeVideoId && imageUrl && (
+                <img ref={imgRef} src={imageUrl} alt="thumb" style={{ display: "none" }} onLoad={() => recomputeDrawMeta()} />
+              )}
+              {/* Draw boxes in overlay above media */}
+              <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2 }}>
+                {boxes.map((d, idx) => {
+                  const [x1, y1, x2, y2] = d.box;
+                  const left = drawMeta.offsetX + x1 * drawMeta.scale;
+                  const top = drawMeta.offsetY + y1 * drawMeta.scale;
+                  const width = (x2 - x1) * drawMeta.scale;
+                  const height = (y2 - y1) * drawMeta.scale;
+                  return (
+                    <div key={idx} style={{ position: "absolute", left, top, width, height, border: "2px solid #0f62fe" }}>
+                      <div style={{ position: "absolute", left: 0, top: -20, background: "#0f62fe", color: "#fff", fontSize: 12, padding: "2px 4px" }}>
+                        {d.label} {(d.confidence * 100).toFixed(1)}%
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -318,21 +417,23 @@ export default function Home() {
                   />
                   </>
                 ) : (
-                  <div
-                    style={{
-                      outline: youTubeVideoId ? "2px solid #0f62fe" : undefined,
-                      outlineOffset: 2,
-                      borderRadius: 4,
-                      padding: youTubeVideoId ? 2 : 0,
-                    }}
-                  >
-                    <TextInput
-                      id="youtube-url-input"
-                      labelText="URL"
-                      placeholder="https://www.youtube.com/watch?v=..."
-                      value={youtubeUrl}
-                      onChange={(e: any) => setYoutubeUrl(e.target.value)}
-                    />
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                      <FormLabel style={{ display: "block", marginBottom: 0 }}>URL</FormLabel>
+                      {youTubeVideoId && (
+                        <CheckmarkFilled size={16} aria-hidden="true" style={{ color: "#0f62fe" }} />
+                      )}
+                    </div>
+                    <div>
+                      <TextInput
+                        id="youtube-url-input"
+                        hideLabel
+                        labelText="URL"
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        value={youtubeUrl}
+                        onChange={(e: any) => setYoutubeUrl(e.target.value)}
+                      />
+                    </div>
                   </div>
                 )}
                 <div style={{ marginTop: 8 }}>
@@ -419,33 +520,31 @@ export default function Home() {
                 kind="primary"
                 size="md"
                 onClick={async () => {
-                  const form = new FormData();
-                  if (sourceKind === "youtube" && youTubeVideoId) {
-                    // Fetch YouTube thumbnail as a stand-in frame for detection
-                    let thumbUrl = `https://img.youtube.com/vi/${youTubeVideoId}/maxresdefault.jpg`;
-                    let resp = await fetch(thumbUrl);
-                    if (!resp.ok) {
-                      thumbUrl = `https://img.youtube.com/vi/${youTubeVideoId}/hqdefault.jpg`;
-                      resp = await fetch(thumbUrl);
-                    }
-                    const blob = await resp.blob();
-                    form.append("file", new File([blob], "frame.jpg", { type: "image/jpeg" }));
-                  } else {
-                    if (!imageFiles.length && !imageUrl) return;
-                    const file = imageFiles[0];
-                    form.append("file", file);
+                  // Toggle live overlay for video sources
+                  if ((sourceKind === "local" && videoUrl) || (sourceKind === "youtube" && youTubeVideoId)) {
+                    setLiveOverlay((v) => !v);
+                    return;
                   }
+                  // Single-shot detection for still images
+                  const form = new FormData();
+                  if (!imageFiles.length && !imageUrl) return;
+                  const file = imageFiles[0];
+                  form.append("file", file);
                   const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
-                  const res = await fetch(`http://localhost:8002/predict${q}`, {
-                    method: "POST",
-                    body: form,
-                  });
+                  const res = await fetch(`http://localhost:8002/predict${q}`, { method: "POST", body: form });
                   const data = await res.json();
                   setBoxes(Array.isArray(data?.objects) ? data.objects : []);
                 }}
               >
-                Start Object Detection
+                {((sourceKind === "local" && videoUrl) || (sourceKind === "youtube" && youTubeVideoId))
+                  ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection")
+                  : "Start Object Detection"}
               </Button>
+              {((sourceKind === "local" && videoUrl) || (sourceKind === "youtube" && youTubeVideoId)) && (
+                <Button kind="secondary" size="md" style={{ marginLeft: 8 }} onClick={() => {
+                  setLiveOverlay((v) => !v);
+                }}>{liveOverlay ? "Live Overlay: ON" : "Live Overlay: OFF"}</Button>
+              )}
             </div>
           </div>
         </div>

@@ -6,11 +6,16 @@ import json
 import os
 import time
 from typing import Any, Dict, List
+import asyncio
 
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import numpy as np
+try:
+    import cv2  # type: ignore
+except Exception:  # pragma: no cover
+    cv2 = None
 
 
 def allowed_origins() -> list[str]:
@@ -130,6 +135,107 @@ async def ws_detect(websocket: WebSocket) -> None:
                 await websocket.send_text(json.dumps({"error": str(e)}))
     except WebSocketDisconnect:
         return
+
+
+@app.websocket("/ws/youtube")
+async def ws_youtube(websocket: WebSocket, weight: str | None = None) -> None:
+    await websocket.accept()
+    if cv2 is None:
+        await websocket.send_text(json.dumps({"error": "opencv not installed"}))
+        await websocket.close()
+        return
+    try:
+        first = await websocket.receive_text()
+        payload = json.loads(first)
+        url = payload.get("url")
+        if not url:
+            await websocket.send_text(json.dumps({"error": "missing url"}))
+            await websocket.close()
+            return
+        # Ensure model is loaded for the requested weight
+        load_model_v5(weight)
+
+        # Use yt-dlp to resolve a progressive stream URL (mp4/http) if possible
+        import yt_dlp  # type: ignore
+
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "best[protocol^=http][ext=mp4]/best[protocol^=https][ext=mp4]/best",
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore
+            info = ydl.extract_info(url, download=False)
+            stream_url = info.get("url")
+        if not stream_url:
+            await websocket.send_text(json.dumps({"error": "unable to resolve stream"}))
+            await websocket.close()
+            return
+
+        async def loop_with_cv2(surl: str) -> bool:
+            cap = cv2.VideoCapture(surl)  # type: ignore
+            if not cap.isOpened():
+                return False
+            try:
+                last_sent = 0.0
+                while True:
+                    # Allow stop via client message
+                    try:
+                        msg = await asyncio.wait_for(websocket.receive_text(), timeout=0.0)
+                        if msg == "stop":
+                            break
+                    except Exception:
+                        pass
+                    ok, frame = cap.read()
+                    if not ok:
+                        await asyncio.sleep(0.05)
+                        continue
+                    now = time.time()
+                    if now - last_sent < 0.5:
+                        await asyncio.sleep(0.01)
+                        continue
+                    last_sent = now
+                    img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))  # type: ignore
+                    objects = infer(img)
+                    await websocket.send_text(json.dumps({"objects": objects, "ts": now}))
+                return True
+            finally:
+                cap.release()
+
+        # Try OpenCV first; if it fails, fall back to imageio-ffmpeg
+        ok_cv = False
+        if cv2 is not None:
+            try:
+                ok_cv = await loop_with_cv2(stream_url)
+            except Exception:
+                ok_cv = False
+        if not ok_cv:
+            import imageio.v3 as iio  # type: ignore
+            last_sent = 0.0
+            try:
+                for frame in iio.imiter(stream_url, plugin="ffmpeg", output_format="rgb24"):
+                    try:
+                        msg = await asyncio.wait_for(websocket.receive_text(), timeout=0.0)
+                        if msg == "stop":
+                            break
+                    except Exception:
+                        pass
+                    now = time.time()
+                    if now - last_sent < 0.5:
+                        await asyncio.sleep(0.005)
+                        continue
+                    last_sent = now
+                    img = Image.fromarray(frame)
+                    objects = infer(img)
+                    await websocket.send_text(json.dumps({"objects": objects, "ts": now}))
+            except Exception as e:
+                await websocket.send_text(json.dumps({"error": str(e)}))
+    except WebSocketDisconnect:
+        return
+    except Exception as e:  # pragma: no cover
+        try:
+            await websocket.send_text(json.dumps({"error": str(e)}))
+        finally:
+            await websocket.close()
 
 
 def get_app() -> FastAPI:
