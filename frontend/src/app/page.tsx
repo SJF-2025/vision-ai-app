@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { ThumbsUp } from "@carbon/icons-react";
-import { Select, SelectItem, FileUploaderDropContainer, FileUploaderItem, Button } from "@carbon/react";
+import { FiCamera } from "react-icons/fi";
+import { Select, SelectItem, FileUploaderDropContainer, FileUploaderItem, Button, TextInput, FormLabel } from "@carbon/react";
 
 export default function Home() {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
@@ -11,8 +11,13 @@ export default function Home() {
   const [imageUrl, setImageUrl] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [boxes, setBoxes] = useState<{ box: number[]; label: string; confidence: number }[]>([]);
+  const [sourceKind, setSourceKind] = useState<"local" | "youtube">("local");
+  const [youtubeUrl, setYoutubeUrl] = useState<string>("");
+  const [weightSourceKind, setWeightSourceKind] = useState<"local" | "external">("local");
+  const [youTubeVideoId, setYouTubeVideoId] = useState<string>("");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [drawMeta, setDrawMeta] = useState({
     scale: 1,
     offsetX: 0,
@@ -68,10 +73,28 @@ export default function Home() {
   // Revoke object URLs when files change/unmount
   useEffect(() => {
     return () => {
-      if (imageUrl) URL.revokeObjectURL(imageUrl);
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      if (imageUrl && imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
+      if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
     };
   }, [imageUrl, videoUrl]);
+
+  const handleAddedFiles = (addedFiles: File[]) => {
+    if (!addedFiles || addedFiles.length === 0) return;
+    const f = addedFiles[0];
+    const isImage = f.type.startsWith("image/");
+    const url = URL.createObjectURL(f);
+    if (isImage) {
+      setImageFiles([f]);
+      setImageUrl(url);
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      setVideoUrl("");
+    } else {
+      setImageFiles([]);
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
+      setImageUrl("");
+      setVideoUrl(url);
+    }
+  };
 
   // Compute how the image is fitted inside the container so we can scale boxes
   const recomputeDrawMeta = () => {
@@ -97,6 +120,37 @@ export default function Home() {
     return () => window.removeEventListener("resize", handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Parse YouTube URL and set preview thumbnail when valid
+  useEffect(() => {
+    if (sourceKind !== "youtube") {
+      setYouTubeVideoId("");
+      return;
+    }
+    const match = youtubeUrl.match(/(?:v=|youtu\.be\/|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);
+    const vid = match ? match[1] : "";
+    setYouTubeVideoId(vid);
+    if (vid) {
+      // Use a remote thumbnail for preview in the large placeholder
+      const thumb = `https://img.youtube.com/vi/${vid}/maxresdefault.jpg`;
+      setImageUrl(thumb);
+      setVideoUrl("");
+      setImageFiles([]);
+    }
+  }, [youtubeUrl, sourceKind]);
+
+  // When switching back to Local, clear YouTube state and reset the viewer to empty
+  useEffect(() => {
+    if (sourceKind === "local") {
+      setYoutubeUrl("");
+      setYouTubeVideoId("");
+      setImageFiles([]);
+      if (imageUrl && !imageUrl.startsWith("blob:")) {
+        setImageUrl("");
+      }
+      setVideoUrl("");
+    }
+  }, [sourceKind]);
   return (
     <main style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh - 48px)" }}>
       <section
@@ -111,17 +165,19 @@ export default function Home() {
         }}
       >
         <div style={{ width: "100%", maxWidth: 960 }}>
+          { /* Border switches to dashed when empty, solid when media is present */ }
+          { /* hasMedia used below via inline expression */ }
           <div
             style={{
               width: "100%",
               aspectRatio: "16 / 9",
-              border: "1px solid #8d8d8d",
+              border: (imageUrl || videoUrl) ? "1px solid #8d8d8d" : "1px dashed #8d8d8d",
               borderRadius: 0,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               overflow: "hidden",
-              background: "#f4f4f4",
+              background: "#fcfcfc",
             }}
           >
             <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%" }}>
@@ -140,22 +196,41 @@ export default function Home() {
                   controls
                 />
               ) : (
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#8d8d8d",
-                    textAlign: "center",
-                    padding: 16,
-                    gap: 8,
-                  }}
-                >
-                  <span>Get started by adding a source & model weight!</span>
-                  <ThumbsUp size={20} aria-hidden="true" />
-                </div>
+                sourceKind === "youtube" ? (
+                  <div
+                    style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <span style={{ color: "#8d8d8d" }}>Add your YouTube video in the URL field below.</span>
+                  </div>
+                ) : (
+                  <div
+                    style={{ position: "absolute", inset: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const files = Array.from(e.dataTransfer.files);
+                      handleAddedFiles(files as File[]);
+                    }}
+                  >
+                    <span style={{ color: "#0f62fe", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      Get started by adding an image or video here! <FiCamera aria-hidden="true" />
+                    </span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*,video/*"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const files = e.target.files ? Array.from(e.target.files) : [];
+                        handleAddedFiles(files as File[]);
+                        if (e.currentTarget) e.currentTarget.value = "";
+                      }}
+                    />
+                  </div>
+                )
               )}
               {/* Draw boxes */}
               {boxes.map((d, idx) => {
@@ -193,44 +268,73 @@ export default function Home() {
 
       <section style={{ padding: 16, borderTop: "1px solid #e0e0e0", background: "#fff" }}>
         <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto", marginTop: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr 1px 1fr", gap: 32, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr 1px 1fr", columnGap: 0, alignItems: "start" }}>
             {/* Left: 1. Add Source */}
-            <div>
-              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Add Source</h3>
+            <div style={{ padding: "0 48px" }}>
+              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose Source</h3>
+              <div style={{ marginBottom: 16 }}>
+                <Select id="choose-source-kind" labelText="Source" value={sourceKind} onChange={(e) => setSourceKind(e.target.value as any)}>
+                  <SelectItem text="Local File" value="local" />
+                  <SelectItem text="YouTube" value="youtube" />
+                </Select>
+              </div>
               <div>
-                <FileUploaderDropContainer
-                  accept={[
-                    ".jpg",
-                    "image/jpeg",
-                    ".png",
-                    "image/png",
-                    "video/*",
-                    ".mp4",
-                    ".mpeg",
-                    ".mpg",
-                    ".m4v",
-                    ".mov",
-                  ]}
-                  multiple={false}
-                  labelText="Click or drag an image / video here"
-                  onAddFiles={(evt: any, { addedFiles }: { addedFiles: File[] }) => {
-                    if (!addedFiles || addedFiles.length === 0) return;
-                    const f = addedFiles[0];
-                    const isImage = f.type.startsWith("image/");
-                    const url = URL.createObjectURL(f);
-                    if (isImage) {
-                      setImageFiles([f]);
-                      setImageUrl(url);
-                      if (videoUrl) URL.revokeObjectURL(videoUrl);
-                      setVideoUrl("");
-                    } else {
-                      setImageFiles([]);
-                      if (imageUrl) URL.revokeObjectURL(imageUrl);
-                      setImageUrl("");
-                      setVideoUrl(url);
-                    }
-                  }}
-                />
+                {sourceKind === "local" ? (
+                  <>
+                    <FormLabel style={{ display: "block", marginBottom: 8 }}>File</FormLabel>
+                    <FileUploaderDropContainer
+                    accept={[
+                      ".jpg",
+                      "image/jpeg",
+                      ".png",
+                      "image/png",
+                      "video/*",
+                      ".mp4",
+                      ".mpeg",
+                      ".mpg",
+                      ".m4v",
+                      ".mov",
+                    ]}
+                    multiple={false}
+                    labelText="Click or drag an image / video here"
+                    onAddFiles={(evt: any, { addedFiles }: { addedFiles: File[] }) => {
+                      if (!addedFiles || addedFiles.length === 0) return;
+                      const f = addedFiles[0];
+                      const isImage = f.type.startsWith("image/");
+                      const url = URL.createObjectURL(f);
+                      if (isImage) {
+                        setImageFiles([f]);
+                        setImageUrl(url);
+                        if (videoUrl) URL.revokeObjectURL(videoUrl);
+                        setVideoUrl("");
+                      } else {
+                        setImageFiles([]);
+                        if (imageUrl) URL.revokeObjectURL(imageUrl);
+                        setImageUrl("");
+                        setVideoUrl(url);
+                      }
+                    }}
+                    style={{ height: 40, display: "flex", alignItems: "center" } as any}
+                  />
+                  </>
+                ) : (
+                  <div
+                    style={{
+                      outline: youTubeVideoId ? "2px solid #0f62fe" : undefined,
+                      outlineOffset: 2,
+                      borderRadius: 4,
+                      padding: youTubeVideoId ? 2 : 0,
+                    }}
+                  >
+                    <TextInput
+                      id="youtube-url-input"
+                      labelText="URL"
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      value={youtubeUrl}
+                      onChange={(e: any) => setYoutubeUrl(e.target.value)}
+                    />
+                  </div>
+                )}
                 <div style={{ marginTop: 8 }}>
                   {imageFiles.map((f) => (
                     <FileUploaderItem
@@ -263,30 +367,50 @@ export default function Home() {
             <div style={{ width: 1, background: "#e0e0e0", height: "100%", minHeight: 120 }} />
 
             {/* Right: 2. Import Model Weight */}
-            <div>
+            <div style={{ padding: "0 48px" }}>
               <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>2. Import Model Weight</h3>
-              <Select
-                id="model-weight-select"
-                labelText="Model Weights"
-                value={selectedWeight}
-                onChange={(e) => setSelectedWeight(e.target.value)}
-                style={{ minWidth: 260 }}
-              >
-                {availableWeights.length === 0 ? (
-                  <SelectItem text="No weights found" value="" />
-                ) : (
-                  availableWeights.map((w) => (
-                    <SelectItem key={w} text={w} value={w} />
-                  ))
-                )}
-              </Select>
+              <div style={{ marginBottom: 16 }}>
+                <Select
+                  id="weight-source-kind"
+                  labelText="Source"
+                  value={weightSourceKind}
+                  onChange={(e) => setWeightSourceKind(e.target.value as any)}
+                >
+                  <SelectItem text="Local Weight" value="local" />
+                  <SelectItem text="External Weight" value="external" />
+                </Select>
+              </div>
+              {weightSourceKind === "local" ? (
+                <Select
+                  id="model-weight-select"
+                  labelText="Model Weight"
+                  value={selectedWeight}
+                  onChange={(e) => setSelectedWeight(e.target.value)}
+                  style={{ minWidth: 260 }}
+                >
+                  {availableWeights.length === 0 ? (
+                    <SelectItem text="No weights found" value="" />
+                  ) : (
+                    availableWeights.map((w) => (
+                      <SelectItem key={w} text={w} value={w} />
+                    ))
+                  )}
+                </Select>
+              ) : (
+                <TextInput
+                  id="external-weight-url"
+                  labelText="External Weight (URL)"
+                  placeholder="https://... (coming soon)"
+                  disabled
+                />
+              )}
             </div>
 
             {/* Divider */}
             <div style={{ width: 1, background: "#e0e0e0", height: "100%", minHeight: 120 }} />
 
             {/* 3. Start Detection */}
-            <div>
+            <div style={{ padding: "0 48px" }}>
               <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>3. Start Detection</h3>
               <p style={{ margin: "0 0 12px", color: "#525252" }}>
                 Start object detection using the selected source and uploaded model weights.
@@ -295,11 +419,22 @@ export default function Home() {
                 kind="primary"
                 size="md"
                 onClick={async () => {
-                  // Only support still image for now
-                  if (!imageFiles.length && !imageUrl) return;
-                  const file = imageFiles[0];
                   const form = new FormData();
-                  form.append("file", file);
+                  if (sourceKind === "youtube" && youTubeVideoId) {
+                    // Fetch YouTube thumbnail as a stand-in frame for detection
+                    let thumbUrl = `https://img.youtube.com/vi/${youTubeVideoId}/maxresdefault.jpg`;
+                    let resp = await fetch(thumbUrl);
+                    if (!resp.ok) {
+                      thumbUrl = `https://img.youtube.com/vi/${youTubeVideoId}/hqdefault.jpg`;
+                      resp = await fetch(thumbUrl);
+                    }
+                    const blob = await resp.blob();
+                    form.append("file", new File([blob], "frame.jpg", { type: "image/jpeg" }));
+                  } else {
+                    if (!imageFiles.length && !imageUrl) return;
+                    const file = imageFiles[0];
+                    form.append("file", file);
+                  }
                   const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
                   const res = await fetch(`http://localhost:8002/predict${q}`, {
                     method: "POST",
