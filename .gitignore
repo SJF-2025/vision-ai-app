@@ -1,0 +1,45 @@
+# Node / Next.js
+node_modules/
+.next/
+.turbo/
+out/
+dist/
+.eslintcache
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+pip-wheel-metadata/
+
+# Logs & temp
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Coverage/Testing
+.coverage
+coverage*/
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS/IDE
+.DS_Store
+.idea/
+.vscode/
+*.code-workspace
+
