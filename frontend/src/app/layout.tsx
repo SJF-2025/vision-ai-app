@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Vision AI App",
+  title: "SJF X IBM VisionAI",
   description: "Carbon + Next demo",
 };
 

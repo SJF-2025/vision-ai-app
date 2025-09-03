@@ -7,13 +7,17 @@ import os
 import time
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
+import numpy as np
 
 
 def allowed_origins() -> list[str]:
-    raw = os.getenv("FRONTEND_CORS_ORIGIN", "http://localhost:3002")
+    raw = os.getenv(
+        "FRONTEND_CORS_ORIGIN",
+        "http://localhost:3002,http://127.0.0.1:3002",
+    )
     return [v.strip() for v in raw.split(",") if v.strip()]
 
 
@@ -26,19 +30,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_model = None
+_model_v5 = None
+_current_weight_path: str | None = None
 
 
-def load_model():
-    global _model
-    if _model is not None:
-        return _model
-    try:
-        from ultralytics import YOLO  # type: ignore
-        _model = YOLO(os.getenv("MODEL_PATH", "yolov8n.pt"))
-    except Exception:
-        _model = None
-    return _model
+def _weights_dir() -> str:
+    return os.path.normpath(
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "weights")
+    )
+
+
+def load_model_v5(requested_weight: str | None = None):
+    global _model_v5
+    global _current_weight_path
+    # Resolve which weight to use
+    default_path = os.path.join(_weights_dir(), "yolov5s.pt")
+    if requested_weight:
+        # If provided a filename, resolve relative to weights dir
+        if not os.path.isabs(requested_weight):
+            model_path = os.path.join(_weights_dir(), requested_weight)
+        else:
+            model_path = requested_weight
+    else:
+        model_path = os.getenv("MODEL_PATH", default_path)
+
+    # Reload model if path changed or not yet loaded
+    if _model_v5 is not None and _current_weight_path == model_path:
+        return _model_v5
+    # Loads YOLOv5 via torch.hub
+    # Lazy import torch so simple endpoints like /weights don't require it
+    import torch  # type: ignore
+    _model_v5 = torch.hub.load(
+        "ultralytics/yolov5", "custom", path=model_path, force_reload=False
+    )
+    _current_weight_path = model_path
+    return _model_v5
 
 
 @app.get("/health")
@@ -47,31 +73,41 @@ async def health() -> Dict[str, Any]:
 
 
 def infer(image: Image.Image) -> List[Dict[str, Any]]:
-    model = load_model()
-    if model is None:
-        return [{"label": "placeholder", "confidence": 0.99, "box": [50, 50, 200, 200]}]
-    results = model(image)
-    objects: List[Dict[str, Any]] = []
+    model = load_model_v5()
+    # PIL -> numpy BGR for YOLOv5 hub model
+    frame = np.array(image)[:, :, ::-1]
+    res = model(frame)
+    names = model.names
+    dets: List[Dict[str, Any]] = []
+    for *xyxy, conf, cls in res.xyxy[0].tolist():
+        dets.append(
+            {
+                "label": names[int(cls)],
+                "confidence": float(conf),
+                "box": [float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])],
+            }
+        )
+    return dets
+
+
+@app.get("/weights")
+async def list_weights() -> Dict[str, Any]:
+    exts = {".pt", ".onnx", ".engine"}
+    wdir = _weights_dir()
     try:
-        r = results[0]
-        boxes = r.boxes
-        names = r.names
-        for i in range(len(boxes)):
-            b = boxes[i]
-            xyxy = b.xyxy[0].tolist()
-            conf = float(b.conf[0]) if hasattr(b, "conf") else 0.0
-            cls_idx = int(b.cls[0]) if hasattr(b, "cls") else 0
-            label = names.get(cls_idx, str(cls_idx)) if isinstance(names, dict) else str(cls_idx)
-            objects.append({"label": label, "confidence": conf, "box": xyxy})
+        files = [f for f in os.listdir(wdir) if os.path.splitext(f)[1].lower() in exts]
+        files.sort()
     except Exception:
-        objects = [{"label": "object", "confidence": 0.5, "box": [10, 10, 100, 100]}]
-    return objects
+        files = []
+    return {"weights": files}
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def predict(file: UploadFile = File(...), weight: str | None = Query(default=None)) -> Dict[str, Any]:
     content = await file.read()
     image = Image.open(io.BytesIO(content)).convert("RGB")
+    # Ensure the model is loaded for the requested weight (if any)
+    load_model_v5(weight)
     return {"objects": infer(image), "ts": time.time()}
 
 
