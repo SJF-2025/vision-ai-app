@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { FiCamera } from "react-icons/fi";
 import { Select, SelectItem, FileUploaderDropContainer, FileUploaderItem, Button, TextInput, FormLabel } from "@carbon/react";
+import { TrashCan } from "@carbon/icons-react";
 import { CheckmarkFilled } from "@carbon/icons-react";
 
 export default function Home() {
@@ -145,15 +146,31 @@ export default function Home() {
     }
   }, [youtubeUrl, sourceKind]);
 
-  // When switching back to Local, clear YouTube state and reset the viewer to empty
+  // Reset viewer state when changing source kind (local <-> youtube)
   useEffect(() => {
+    // Clear detection boxes and live states on any switch
+    setBoxes([]);
+    setIsPlaying(false);
+    setLiveOverlay(false);
+
     if (sourceKind === "local") {
+      // Switched to Local: clear YouTube-related state and any remote preview
       setYoutubeUrl("");
       setYouTubeVideoId("");
-      setImageFiles([]);
+      // Keep previously selected local file if any; clear remote image preview
       if (imageUrl && !imageUrl.startsWith("blob:")) {
         setImageUrl("");
       }
+    } else if (sourceKind === "youtube") {
+      // Switched to YouTube: clear local file/video previews so big field is empty
+      if (imageUrl && imageUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(imageUrl); } catch {}
+      }
+      if (videoUrl && videoUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(videoUrl); } catch {}
+      }
+      setImageFiles([]);
+      setImageUrl("");
       setVideoUrl("");
     }
   }, [sourceKind]);
@@ -225,6 +242,29 @@ export default function Home() {
     ws.onclose = () => { wsRef.current = null; };
     return () => { try { ws.close(); } catch {} };
   }, [sourceKind, youTubeVideoId, liveOverlay, selectedWeight]);
+
+  const handleResetViewer = () => {
+    try {
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.currentTime = 0;
+      }
+    } catch {}
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
+    if (imageUrl && imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
+    if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+    setImageFiles([]);
+    setImageUrl("");
+    setVideoUrl("");
+    setBoxes([]);
+    setYoutubeUrl("");
+    setYouTubeVideoId("");
+    setIsPlaying(false);
+    setLiveOverlay(false);
+  };
 
   return (
     <main style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh - 48px)" }}>
@@ -325,6 +365,22 @@ export default function Home() {
                   </div>
                 )
               )}
+              {/* Controls overlay: clear/reset button */}
+              {(imageUrl || videoUrl || youTubeVideoId) && (
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 3 }}>
+                  <div style={{ position: "absolute", right: 12, bottom: 12, pointerEvents: "auto" }}>
+                    <Button
+                      hasIconOnly
+                      iconDescription="Clear source"
+                      renderIcon={TrashCan}
+                      kind="tertiary"
+                      size="sm"
+                      onClick={handleResetViewer}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* For YouTube, load hidden thumbnail to compute scaling */}
               {youTubeVideoId && imageUrl && (
                 <img ref={imgRef} src={imageUrl} alt="thumb" style={{ display: "none" }} onLoad={() => recomputeDrawMeta()} />
@@ -370,7 +426,7 @@ export default function Home() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr 1px 1fr", columnGap: 0, alignItems: "start" }}>
             {/* Left: 1. Add Source */}
             <div style={{ padding: "0 48px" }}>
-              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose Source</h3>
+              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose File Source</h3>
               <div style={{ marginBottom: 16 }}>
                 <Select id="choose-source-kind" labelText="Source" value={sourceKind} onChange={(e) => setSourceKind(e.target.value as any)}>
                   <SelectItem text="Local File" value="local" />
@@ -512,7 +568,7 @@ export default function Home() {
 
             {/* 3. Start Detection */}
             <div style={{ padding: "0 48px" }}>
-              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>3. Start Detection</h3>
+              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>3. Start Object Detection</h3>
               <p style={{ margin: "0 0 12px", color: "#525252" }}>
                 Start object detection using the selected source and uploaded model weights.
               </p>
