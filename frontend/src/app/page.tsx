@@ -14,7 +14,7 @@ export default function Home() {
   const [imageUrl, setImageUrl] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [boxes, setBoxes] = useState<{ box: number[]; label: string; confidence: number }[]>([]);
-  const [sourceKind, setSourceKind] = useState<"local" | "snapshot">("local");
+  const [sourceKind, setSourceKind] = useState<"local" | "snapshot" | "webcam">("local");
   const [snapshotUrl, setSnapshotUrl] = useState<string>("");
   const [weightSourceKind, setWeightSourceKind] = useState<"local" | "pretrained">("local");
   const wsRef = useRef<WebSocket | null>(null);
@@ -22,6 +22,8 @@ export default function Home() {
   const imgRef = useRef<HTMLImageElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const webcamStreamRef = useRef<MediaStream | null>(null);
+  const [webcamOn, setWebcamOn] = useState(false);
   const [drawMeta, setDrawMeta] = useState({
     scale: 1,
     offsetX: 0,
@@ -90,8 +92,11 @@ export default function Home() {
     return () => {
       if (imageUrl && imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
       if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+      // Ensure webcam is stopped on unmount
+      stopWebcam();
     };
-  }, [imageUrl, videoUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleAddedFiles = (addedFiles: File[]) => {
     if (!addedFiles || addedFiles.length === 0) return;
@@ -161,12 +166,25 @@ export default function Home() {
     if (sourceKind === "local") {
       // Switched to Local: clear remote preview
       setSnapshotUrl("");
+      stopWebcam();
       // Keep previously selected local file if any; clear remote image preview
       if (imageUrl && !imageUrl.startsWith("blob:")) {
         setImageUrl("");
       }
     } else if (sourceKind === "snapshot") {
-      // Switched to Snapshot: clear local file/video previews
+      // Switched to Snapshot: clear local file/video previews and webcam
+      if (imageUrl && imageUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(imageUrl); } catch {}
+      }
+      if (videoUrl && videoUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(videoUrl); } catch {}
+      }
+      stopWebcam();
+      setImageFiles([]);
+      setImageUrl("");
+      setVideoUrl("");
+    } else if (sourceKind === "webcam") {
+      // Switching to webcam: clear any file/snapshot previews
       if (imageUrl && imageUrl.startsWith("blob:")) {
         try { URL.revokeObjectURL(imageUrl); } catch {}
       }
@@ -177,10 +195,12 @@ export default function Home() {
       setImageUrl("");
       setVideoUrl("");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKind]);
-  // Live overlay detection loop for local video
+
+  // Live overlay detection loop for video sources (local file or webcam)
   useEffect(() => {
-    if (!(isPlaying && liveOverlay && sourceKind === "local" && videoRef.current)) return;
+    if (!(isPlaying && liveOverlay && (sourceKind === "local" || sourceKind === "webcam") && videoRef.current)) return;
     let cancelled = false;
     let lastSent = 0;
     const canvas = document.createElement("canvas");
@@ -221,7 +241,47 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, liveOverlay, selectedWeight, sourceKind]);
 
-  // No websocket logic for snapshot source at the moment
+  const startWebcam = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      webcamStreamRef.current = stream;
+      if (videoRef.current) {
+        try {
+          // @ts-ignore
+          videoRef.current.srcObject = stream;
+        } catch {
+          // Safari fallback
+          (videoRef.current as any).srcObject = stream;
+        }
+        videoRef.current.muted = true;
+        await videoRef.current.play();
+        setIsPlaying(true);
+        setWebcamOn(true);
+        setTimeout(recomputeDrawMeta, 100);
+      }
+    } catch (err) {
+      console.error("Failed to start webcam:", err);
+    }
+  };
+
+  const stopWebcam = () => {
+    try {
+      const s = webcamStreamRef.current;
+      if (s) {
+        s.getTracks().forEach((t) => t.stop());
+      }
+    } catch {}
+    webcamStreamRef.current = null;
+    try {
+      if (videoRef.current) {
+        // @ts-ignore
+        videoRef.current.srcObject = null;
+        videoRef.current.pause();
+      }
+    } catch {}
+    setWebcamOn(false);
+    setIsPlaying(false);
+  };
 
   const handleResetViewer = () => {
     try {
@@ -236,6 +296,7 @@ export default function Home() {
     }
     if (imageUrl && imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
     if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+    stopWebcam();
     setImageFiles([]);
     setImageUrl("");
     setVideoUrl("");
@@ -264,7 +325,7 @@ export default function Home() {
             style={{
               width: "100%",
               aspectRatio: "16 / 9",
-              border: (imageUrl || videoUrl) ? "1px solid #8d8d8d" : "1px dashed #8d8d8d",
+              border: (imageUrl || videoUrl || webcamOn) ? "1px solid #8d8d8d" : "1px dashed #8d8d8d",
               borderRadius: 0,
               display: "flex",
               alignItems: "center",
@@ -282,33 +343,33 @@ export default function Home() {
                   style={{ width: "100%", height: "100%", objectFit: "contain" }}
                   onLoad={() => recomputeDrawMeta()}
                 />
-              ) : videoUrl ? (
+              ) : (videoUrl || webcamOn) ? (
                 <div style={{ position: "relative", width: "100%", height: "100%" }}>
                   <video
                     ref={videoRef}
-                    src={videoUrl}
+                    src={videoUrl || undefined}
                     style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
                     onLoadedMetadata={() => { recomputeDrawMeta(); }}
                     onPlay={() => { setIsPlaying(true); }}
                     onPause={() => { setIsPlaying(false); }}
+                    autoPlay={webcamOn}
+                    playsInline
                     controls={false}
                   />
                 </div>
               ) : (
                   <div
-                    style={{ position: "absolute", inset: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const files = Array.from(e.dataTransfer.files);
-                      handleAddedFiles(files as File[]);
-                    }}
+                    style={{ position: "absolute", inset: 0, cursor: sourceKind === "local" ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}
+                    onClick={sourceKind === "local" ? () => fileInputRef.current?.click() : undefined}
+                    onDragOver={sourceKind === "local" ? (e) => { e.preventDefault(); } : undefined}
+                    onDrop={sourceKind === "local" ? (e) => { e.preventDefault(); const files = Array.from(e.dataTransfer.files); handleAddedFiles(files as File[]); } : undefined}
                   >
-                    <span style={{ color: "#0f62fe", display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      Get started by adding an image or video here! <FiCamera aria-hidden="true" />
+                    <span style={{ color: "#0f62fe", display: "inline-flex", alignItems: "center", gap: 8, textAlign: "center", padding: 8 }}>
+                      {sourceKind === "webcam"
+                        ? "Click Start to enable the webcam"
+                        : sourceKind === "snapshot"
+                        ? "Add Snapshot URL in Source field below."
+                        : "Get started by adding an image or video here!"} <FiCamera aria-hidden="true" />
                     </span>
                     <input
                       ref={fileInputRef}
@@ -324,7 +385,7 @@ export default function Home() {
                   </div>
               )}
               {/* Controls overlay: clear/reset button */}
-              {(imageUrl || videoUrl) && (
+              {(imageUrl || videoUrl || webcamOn) && (
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 3 }}>
                   <div style={{ position: "absolute", right: 12, bottom: 12, pointerEvents: "auto" }}>
                     <Button
@@ -391,6 +452,7 @@ export default function Home() {
                 >
                   <SelectItem text="Local File" value="local" />
                   <SelectItem text="Snapshot" value="snapshot" />
+                  <SelectItem text="Webcam" value="webcam" />
                 </Select>
               </div>
               <div>
@@ -443,6 +505,10 @@ export default function Home() {
                         onChange={(e: any) => setSnapshotUrl(e.target.value)}
                       />
                     </div>
+                  </div>
+                ) : sourceKind === "webcam" ? (
+                  <div style={{ color: "#525252" }}>
+                    Your browser will request camera permission when you start detection.
                   </div>
                 ) : null}
                 <div style={{ marginTop: 8 }}>
@@ -561,7 +627,18 @@ export default function Home() {
                 disabled={!isWeightReady}
                 onClick={async () => {
                   if (!isWeightReady) return;
-                  // Single control for live detection on video sources
+                  // Webcam toggles
+                  if (sourceKind === "webcam") {
+                    if (liveOverlay && webcamOn) {
+                      setLiveOverlay(false);
+                      stopWebcam();
+                      return;
+                    }
+                    await startWebcam();
+                    setLiveOverlay(true);
+                    return;
+                  }
+                  // Single control for live detection on local video file
                   if (sourceKind === "local" && videoUrl) {
                     if (liveOverlay) {
                       // Stop live detection
@@ -574,7 +651,7 @@ export default function Home() {
                     }
                     return;
                   }
-                  // Single-shot detection for still images
+                  // Single-shot detection for still images (including snapshot URL)
                   const form = new FormData();
                   if (!imageFiles.length && !imageUrl) return;
                   const file = imageFiles[0];
@@ -585,7 +662,7 @@ export default function Home() {
                   setBoxes(Array.isArray(data?.objects) ? data.objects : []);
                 }}
               >
-                {(sourceKind === "local" && videoUrl)
+                {(sourceKind === "local" && videoUrl) || sourceKind === "webcam"
                   ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection")
                   : "Start Object Detection"}
               </Button>

@@ -3,7 +3,7 @@ set -euo pipefail
 
 IMAGE_TAG=${IMAGE_TAG:-vision-ai-app:full}
 CONTAINER_NAME=${CONTAINER_NAME:-vision-ai-app}
-FRONTEND_PORT=${FRONTEND_PORT:-3000}
+FRONTEND_PORT=${FRONTEND_PORT:-3001}
 BACKEND_PORT=${BACKEND_PORT:-8002}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,7 +17,7 @@ podman rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
 # Run container with ports and weights mounted
 podman run --rm -d \
-  -p ${FRONTEND_PORT}:3000 \
+  -p ${FRONTEND_PORT}:${FRONTEND_PORT} \
   -p ${BACKEND_PORT}:8002 \
   -e FRONTEND_PORT=${FRONTEND_PORT} \
   -e BACKEND_PORT=${BACKEND_PORT} \
