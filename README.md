@@ -1,9 +1,9 @@
-# Vision AI App
+# VisionAI
 
 Start the full stack (frontend + backend) in one command.
 
 ## Quick Start
-From this folder:
+From this folder (root):
 
 ```bash
 ./run.sh

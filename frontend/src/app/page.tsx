@@ -13,10 +13,9 @@ export default function Home() {
   const [imageUrl, setImageUrl] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [boxes, setBoxes] = useState<{ box: number[]; label: string; confidence: number }[]>([]);
-  const [sourceKind, setSourceKind] = useState<"local" | "youtube" | "snapshot">("local");
-  const [youtubeUrl, setYoutubeUrl] = useState<string>("");
-  const [weightSourceKind, setWeightSourceKind] = useState<"local" | "external">("local");
-  const [youTubeVideoId, setYouTubeVideoId] = useState<string>("");
+  const [sourceKind, setSourceKind] = useState<"local" | "snapshot">("local");
+  const [snapshotUrl, setSnapshotUrl] = useState<string>("");
+  const [weightSourceKind, setWeightSourceKind] = useState<"local" | "pretrained">("local");
   const wsRef = useRef<WebSocket | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -128,25 +127,17 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Parse YouTube URL and set preview thumbnail when valid
+  // Update preview when snapshot URL changes
   useEffect(() => {
-    if (sourceKind !== "youtube") {
-      setYouTubeVideoId("");
-      return;
-    }
-    const match = youtubeUrl.match(/(?:v=|youtu\.be\/|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);
-    const vid = match ? match[1] : "";
-    setYouTubeVideoId(vid);
-    if (vid) {
-      // Use a remote thumbnail for preview in the large placeholder
-      const thumb = `https://img.youtube.com/vi/${vid}/maxresdefault.jpg`;
-      setImageUrl(thumb);
+    if (sourceKind !== "snapshot") return;
+    if (snapshotUrl) {
+      setImageUrl(snapshotUrl);
       setVideoUrl("");
       setImageFiles([]);
     }
-  }, [youtubeUrl, sourceKind]);
+  }, [snapshotUrl, sourceKind]);
 
-  // Reset viewer state when changing source kind (local <-> youtube)
+  // Reset viewer state when changing source kind
   useEffect(() => {
     // Clear detection boxes and live states on any switch
     setBoxes([]);
@@ -154,15 +145,14 @@ export default function Home() {
     setLiveOverlay(false);
 
     if (sourceKind === "local") {
-      // Switched to Local: clear YouTube-related state and any remote preview
-      setYoutubeUrl("");
-      setYouTubeVideoId("");
+      // Switched to Local: clear remote preview
+      setSnapshotUrl("");
       // Keep previously selected local file if any; clear remote image preview
       if (imageUrl && !imageUrl.startsWith("blob:")) {
         setImageUrl("");
       }
-    } else if (sourceKind === "youtube") {
-      // Switched to YouTube: clear local file/video previews so big field is empty
+    } else if (sourceKind === "snapshot") {
+      // Switched to Snapshot: clear local file/video previews
       if (imageUrl && imageUrl.startsWith("blob:")) {
         try { URL.revokeObjectURL(imageUrl); } catch {}
       }
@@ -217,31 +207,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, liveOverlay, selectedWeight, sourceKind]);
 
-  // Live detection via backend WS for YouTube
-  useEffect(() => {
-    if (!(sourceKind === "youtube" && youTubeVideoId && liveOverlay)) {
-      if (wsRef.current) {
-        try { wsRef.current.close(); } catch {}
-        wsRef.current = null;
-      }
-      return;
-    }
-    const url = `ws://localhost:8002/ws/youtube${selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : ""}`;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ url: `https://www.youtube.com/watch?v=${youTubeVideoId}` }));
-    };
-    ws.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data);
-        if (Array.isArray(data?.objects)) setBoxes(data.objects);
-      } catch {}
-    };
-    ws.onerror = () => {};
-    ws.onclose = () => { wsRef.current = null; };
-    return () => { try { ws.close(); } catch {} };
-  }, [sourceKind, youTubeVideoId, liveOverlay, selectedWeight]);
+  // No websocket logic for snapshot source at the moment
 
   const handleResetViewer = () => {
     try {
@@ -260,8 +226,6 @@ export default function Home() {
     setImageUrl("");
     setVideoUrl("");
     setBoxes([]);
-    setYoutubeUrl("");
-    setYouTubeVideoId("");
     setIsPlaying(false);
     setLiveOverlay(false);
   };
@@ -296,7 +260,7 @@ export default function Home() {
             }}
           >
             <div ref={containerRef} style={{ position: "relative", width: "100%", height: "100%" }}>
-              {imageUrl && sourceKind !== "youtube" ? (
+              {imageUrl ? (
                 <img
                   ref={imgRef}
                   src={imageUrl}
@@ -316,21 +280,7 @@ export default function Home() {
                     controls={false}
                   />
                 </div>
-              ) : youTubeVideoId ? (
-                <iframe
-                  src={`https://www.youtube.com/embed/${youTubeVideoId}?rel=0&modestbranding=1&autoplay=${isPlaying ? 1 : 0}`}
-                  style={{ width: "100%", height: "100%", border: 0, background: "#000" }}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                />
               ) : (
-                sourceKind === "youtube" ? (
-                  <div
-                    style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
-                  >
-                    <span style={{ color: "#8d8d8d" }}>Add your YouTube video in the URL field below.</span>
-                  </div>
-                ) : (
                   <div
                     style={{ position: "absolute", inset: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
                     onClick={() => fileInputRef.current?.click()}
@@ -358,10 +308,9 @@ export default function Home() {
                       }}
                     />
                   </div>
-                )
               )}
               {/* Controls overlay: clear/reset button */}
-              {(imageUrl || videoUrl || youTubeVideoId) && (
+              {(imageUrl || videoUrl) && (
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 3 }}>
                   <div style={{ position: "absolute", right: 12, bottom: 12, pointerEvents: "auto" }}>
                     <Button
@@ -376,10 +325,7 @@ export default function Home() {
                 </div>
               )}
 
-              {/* For YouTube, load hidden thumbnail to compute scaling */}
-              {youTubeVideoId && imageUrl && (
-                <img ref={imgRef} src={imageUrl} alt="thumb" style={{ display: "none" }} onLoad={() => recomputeDrawMeta()} />
-              )}
+              
               {/* Draw boxes in overlay above media */}
               <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2 }}>
                 {boxes.map((d, idx) => {
@@ -430,8 +376,7 @@ export default function Home() {
                   onChange={(e) => setSourceKind(e.target.value as any)}
                 >
                   <SelectItem text="Local File" value="local" />
-                  <SelectItem text="Snapshot Stream" value="snapshot" />
-                  <SelectItem text="YouTube (disabled)" value="youtube" disabled />
+                  <SelectItem text="Snapshot" value="snapshot" />
                 </Select>
               </div>
               <div>
@@ -475,31 +420,24 @@ export default function Home() {
                   </>
                 ) : sourceKind === "snapshot" ? (
                   <div>
-                    <div style={{ marginBottom: 8 }}>
-                      <FormLabel style={{ display: "block", marginBottom: 0 }}>Snapshot Stream</FormLabel>
-                    </div>
-                    <div style={{ color: "#8d8d8d" }}>A periodic snapshot stream source (coming soon).</div>
-                  </div>
-                ) : (
-                  <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                      <FormLabel style={{ display: "block", marginBottom: 0 }}>URL</FormLabel>
-                      {youTubeVideoId && (
+                      <FormLabel style={{ display: "block", marginBottom: 0 }}>Snapshot URL</FormLabel>
+                      {snapshotUrl && (
                         <CheckmarkFilled size={16} aria-hidden="true" style={{ color: "#0f62fe" }} />
                       )}
                     </div>
                     <div>
                       <TextInput
-                        id="youtube-url-input"
+                        id="snapshot-url-input"
                         hideLabel
-                        labelText="URL"
-                        placeholder="https://www.youtube.com/watch?v=..."
-                        value={youtubeUrl}
-                        onChange={(e: any) => setYoutubeUrl(e.target.value)}
+                        labelText="Snapshot URL"
+                        placeholder="http://<ip-address>/snapshot.jpg"
+                        value={snapshotUrl}
+                        onChange={(e: any) => setSnapshotUrl(e.target.value)}
                       />
                     </div>
                   </div>
-                )}
+                ) : null}
                 <div style={{ marginTop: 8 }}>
                   {imageFiles.map((f) => (
                     <FileUploaderItem
@@ -542,32 +480,46 @@ export default function Home() {
                   onChange={(e) => setWeightSourceKind(e.target.value as any)}
                 >
                   <SelectItem text="Local Weight" value="local" />
-                  <SelectItem text="External Weight (disabled)" value="external" disabled />
+                  <SelectItem text="Pretrained Weight" value="pretrained" />
                 </Select>
               </div>
               {weightSourceKind === "local" ? (
+                <div style={{ marginTop: 12 }}>
+                  <FormLabel style={{ display: "block", marginBottom: 8 }}>Local Weight</FormLabel>
+                  <FileUploaderDropContainer
+                    accept={[ ".pt", ".onnx", ".engine" ]}
+                    multiple={false}
+                    labelText="Click or drag a weight file here (.pt)"
+                    onAddFiles={async (_evt: any, { addedFiles }: { addedFiles: File[] }) => {
+                      if (!addedFiles || !addedFiles.length) return;
+                      const f = addedFiles[0];
+                      const form = new FormData();
+                      form.append("file", f);
+                      try {
+                        await fetch("http://localhost:8002/upload-weight", { method: "POST", body: form });
+                        // Refresh list
+                        const r = await fetch("http://localhost:8002/weights", { cache: "no-store" });
+                        if (r.ok) {
+                          const d = await r.json();
+                          const list = Array.isArray(d?.weights) ? d.weights : [];
+                          setAvailableWeights(list);
+                          if (list.length) setSelectedWeight(list[0]);
+                        }
+                      } catch {}
+                    }}
+                    style={{ height: 40, display: "flex", alignItems: "center" } as any}
+                  />
+                </div>
+              ) : (
                 <Select
-                  id="model-weight-select"
-                  labelText="Model Weight"
-                  value={selectedWeight}
+                  id="pretrained-weight-select"
+                  labelText="Pretrained Weight"
+                  value={selectedWeight || "yolov5s.pt"}
                   onChange={(e) => setSelectedWeight(e.target.value)}
                   style={{ minWidth: 260 }}
                 >
-                  {availableWeights.length === 0 ? (
-                    <SelectItem text="No weights found" value="" />
-                  ) : (
-                    availableWeights.map((w) => (
-                      <SelectItem key={w} text={w} value={w} />
-                    ))
-                  )}
+                  <SelectItem text="yolov5s.pt" value="yolov5s.pt" />
                 </Select>
-              ) : (
-                <TextInput
-                  id="external-weight-url"
-                  labelText="External Weight (URL)"
-                  placeholder="https://... (coming soon)"
-                  disabled
-                />
               )}
             </div>
 
@@ -585,7 +537,7 @@ export default function Home() {
                 size="md"
                 onClick={async () => {
                   // Single control for live detection on video sources
-                  if ((sourceKind === "local" && videoUrl) || (sourceKind === "youtube" && youTubeVideoId)) {
+                  if (sourceKind === "local" && videoUrl) {
                     if (liveOverlay) {
                       // Stop live detection
                       setLiveOverlay(false);
@@ -608,7 +560,7 @@ export default function Home() {
                   setBoxes(Array.isArray(data?.objects) ? data.objects : []);
                 }}
               >
-                {((sourceKind === "local" && videoUrl) || (sourceKind === "youtube" && youTubeVideoId))
+                {(sourceKind === "local" && videoUrl)
                   ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection")
                   : "Start Object Detection"}
               </Button>

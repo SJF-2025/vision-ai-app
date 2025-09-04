@@ -109,6 +109,22 @@ async def list_weights() -> Dict[str, Any]:
     return {"weights": files}
 
 
+@app.post("/upload-weight")
+async def upload_weight(file: UploadFile = File(...)) -> Dict[str, Any]:
+    allowed_exts = {".pt", ".onnx", ".engine"}
+    name = os.path.basename(file.filename or "")
+    _, ext = os.path.splitext(name)
+    if not name or ext.lower() not in allowed_exts:
+        return {"error": "unsupported file type"}
+    wdir = _weights_dir()
+    os.makedirs(wdir, exist_ok=True)
+    dest = os.path.join(wdir, name)
+    content = await file.read()
+    with open(dest, "wb") as f:
+        f.write(content)
+    return {"ok": True, "name": name}
+
+
 @app.post("/predict")
 async def predict(file: UploadFile = File(...), weight: str | None = Query(default=None)) -> Dict[str, Any]:
     content = await file.read()
