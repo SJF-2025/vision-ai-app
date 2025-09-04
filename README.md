@@ -19,12 +19,12 @@ Simplest: use the provided PowerShell script.
 
 ```powershell
 # From the project root in PowerShell
-./run.ps1
+.\run.ps1
 ```
 
 Custom port example:
 ```powershell
-./run.ps1 -FrontendPort 3005
+.\run.ps1 -FrontendPort 3005
 ```
 
 Alternative (manual commands): Use the commands below if you prefer not to run the script (see above in the Windows section of Quick Start).
