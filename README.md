@@ -14,6 +14,26 @@ VisionAI is a simple full‑stack application for running object detection (YOLO
 
 ## Platform setup
 
+### For Windows
+Simplest: use the provided PowerShell script.
+
+```powershell
+# From the project root in PowerShell
+./run.ps1
+```
+
+Custom port example:
+```powershell
+./run.ps1 -FrontendPort 3005
+```
+
+Alternative (manual commands): Use the commands below if you prefer not to run the script (see above in the Windows section of Quick Start).
+
+Notes for Windows:
+- The SELinux mount flag `:Z` is not needed on Windows; the script omits it.
+- On first run, Windows Firewall may prompt you; allow access.
+- Open http://localhost:3001 after the container starts.
+
 ### For macOS
 1. Install Podman Desktop (recommended) or CLI.
 2. Start the Podman VM once (or whenever it’s not running):
@@ -35,37 +55,6 @@ To use a different port:
 ```bash
 FRONTEND_PORT=3005 ./run.sh
 ```
-
-### For Windows
-Use Podman Desktop (recommended). You have two options:
-
-- Option A: PowerShell commands (no Bash required)
-
-```powershell
-$env:IMAGE_TAG="vision-ai-app:full"
-$env:CONTAINER_NAME="vision-ai-app"
-$env:FRONTEND_PORT="3001"
-$env:BACKEND_PORT="8002"
-
-podman build --build-arg INCLUDE_TORCH=true -t $env:IMAGE_TAG -f Containerfile .
-podman rm -f $env:CONTAINER_NAME 2>$null
-podman run --rm -d `
-  -p ${env:FRONTEND_PORT}:${env:FRONTEND_PORT} `
-  -p ${env:BACKEND_PORT}:8002 `
-  -e FRONTEND_PORT=$env:FRONTEND_PORT `
-  -e BACKEND_PORT=$env:BACKEND_PORT `
-  -e FRONTEND_CORS_ORIGIN="http://localhost:$($env:FRONTEND_PORT),http://127.0.0.1:$($env:FRONTEND_PORT)" `
-  -v "${PWD}\weights:/app/weights" `
-  --name $env:CONTAINER_NAME $env:IMAGE_TAG
-```
-
-- Option B: Run the Bash script via Git Bash or WSL
-  - Open Git Bash or WSL at the project root and run `./run.sh`.
-
-Notes for Windows:
-- The SELinux mount flag `:Z` is not needed on Windows; the example above omits it.
-- On first run, Windows Firewall may prompt you; allow access.
-- Open http://localhost:3001 after the container starts.
 
 ## Downloads
 - Podman Desktop (GUI for Mac/Windows/Linux): https://podman-desktop.io/
