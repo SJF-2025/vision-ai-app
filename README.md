@@ -17,17 +17,22 @@ VisionAI is a simple full‑stack application for running object detection (YOLO
 ### For Windows
 Simplest: use the provided PowerShell script.
 
+- PowerShell (recommended):
 ```powershell
 # From the project root in PowerShell
 .\run.ps1
 ```
 
-Custom port example:
+- PowerShell with custom port:
 ```powershell
 .\run.ps1 -FrontendPort 3005
 ```
 
-Alternative (manual commands): Use the commands below if you prefer not to run the script (see above in the Windows section of Quick Start).
+- Bash (Git Bash or WSL):
+```bash
+# From the project root in Git Bash or WSL
+MSYS_NO_PATHCONV=1 ./run.sh
+```
 
 Notes for Windows:
 - The SELinux mount flag `:Z` is not needed on Windows; the script omits it.
@@ -38,12 +43,14 @@ Notes for Windows:
 1. Install Podman Desktop (recommended) or CLI.
 2. Start the Podman VM once (or whenever it’s not running):
 
+- Bash:
 ```bash
 podman machine start
 ```
 
 3. From the project root, run:
 
+- Bash:
 ```bash
 ./run.sh
 ```
@@ -52,8 +59,23 @@ podman machine start
 - Backend health: http://localhost:8002/health
 
 To use a different port:
+
+- Bash:
 ```bash
 FRONTEND_PORT=3005 ./run.sh
+```
+
+## Stop the container
+Default container name is `vision-ai-app`.
+
+- PowerShell:
+```powershell
+podman rm -f vision-ai-app
+```
+
+- Bash:
+```bash
+podman rm -f vision-ai-app
 ```
 
 ## Downloads

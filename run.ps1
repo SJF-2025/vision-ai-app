@@ -22,12 +22,12 @@ $weightsHost = Join-Path (Get-Location) "weights"
 
 Write-Host "Starting container $ContainerName on http://localhost:$FrontendPort ..." -ForegroundColor Cyan
 podman run --rm -d `
-  -p ${FrontendPort}:${FrontendPort} `
-  -p ${BackendPort}:8002 `
-  -e FRONTEND_PORT=$FrontendPort `
-  -e BACKEND_PORT=$BackendPort `
-  -e FRONTEND_CORS_ORIGIN="http://localhost:$FrontendPort,http://127.0.0.1:$FrontendPort" `
-  -v "${weightsHost}:/app/weights" `
+  -p "$($FrontendPort):$($FrontendPort)" `
+  -p "$($BackendPort):8002" `
+  -e FRONTEND_PORT="$FrontendPort" `
+  -e BACKEND_PORT="$BackendPort" `
+  -e FRONTEND_CORS_ORIGIN=("http://localhost:{0},http://127.0.0.1:{0}" -f $FrontendPort) `
+  -v ("{0}:/app/weights" -f $weightsHost) `
   --name $ContainerName $ImageTag | Out-Null
 
 Write-Host "" 
