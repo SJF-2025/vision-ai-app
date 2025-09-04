@@ -27,7 +27,7 @@ podman run --rm -d `
   -e FRONTEND_PORT=$FrontendPort `
   -e BACKEND_PORT=$BackendPort `
   -e FRONTEND_CORS_ORIGIN="http://localhost:$FrontendPort,http://127.0.0.1:$FrontendPort" `
-  -v "$weightsHost:/app/weights" `
+  -v "${weightsHost}:/app/weights" `
   --name $ContainerName $ImageTag | Out-Null
 
 Write-Host "" 
