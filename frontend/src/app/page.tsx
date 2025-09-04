@@ -538,10 +538,9 @@ export default function Home() {
                   </div>
                 ) : sourceKind === "webcam" ? (
                   <div>
-                    <div style={{ color: "#525252", marginBottom: 8 }}>Enable your webcam to preview the stream.</div>
                     <Button
-                      kind={webcamOn ? "danger--tertiary" : "secondary"}
-                      size="sm"
+                      kind={webcamOn ? "danger--tertiary" : "primary"}
+                      size="md"
                       onClick={async () => {
                         if (webcamOn) {
                           stopWebcam();
