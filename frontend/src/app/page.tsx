@@ -10,6 +10,7 @@ export default function Home() {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [availableWeights, setAvailableWeights] = useState<string[]>([]);
   const [selectedWeight, setSelectedWeight] = useState<string>("");
+  const [uploadedWeightName, setUploadedWeightName] = useState<string>("");
   const [imageUrl, setImageUrl] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [boxes, setBoxes] = useState<{ box: number[]; label: string; confidence: number }[]>([]);
@@ -32,6 +33,8 @@ export default function Home() {
   });
   const [isPlaying, setIsPlaying] = useState(false);
   const [liveOverlay, setLiveOverlay] = useState(false);
+
+  const isWeightReady = weightSourceKind === "local" ? !!uploadedWeightName : !!selectedWeight;
 
   useEffect(() => {
     const candidates = [
@@ -75,6 +78,13 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Ensure a default selection when switching to pretrained
+  useEffect(() => {
+    if (weightSourceKind === "pretrained" && !selectedWeight) {
+      setSelectedWeight("yolov5s.pt");
+    }
+  }, [weightSourceKind, selectedWeight]);
+
   // Revoke object URLs when files change/unmount
   useEffect(() => {
     return () => {
@@ -86,14 +96,18 @@ export default function Home() {
   const handleAddedFiles = (addedFiles: File[]) => {
     if (!addedFiles || addedFiles.length === 0) return;
     const f = addedFiles[0];
-    const isImage = f.type.startsWith("image/");
+    const mime = f.type || "";
+    const n = f.name?.toLowerCase?.() || "";
+    const isImage = mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(n);
+    const isVideo = mime.startsWith("video/") || /\.(mp4|m4v|mov|mpeg|mpg|avi|mkv|webm)$/i.test(n);
+    if (!isImage && !isVideo) return;
     const url = URL.createObjectURL(f);
     if (isImage) {
       setImageFiles([f]);
       setImageUrl(url);
       if (videoUrl) URL.revokeObjectURL(videoUrl);
       setVideoUrl("");
-    } else {
+    } else if (isVideo) {
       setImageFiles([]);
       if (imageUrl) URL.revokeObjectURL(imageUrl);
       setImageUrl("");
@@ -384,24 +398,17 @@ export default function Home() {
                   <>
                     <FormLabel style={{ display: "block", marginBottom: 8 }}>File</FormLabel>
                     <FileUploaderDropContainer
-                    accept={[
-                      ".jpg",
-                      "image/jpeg",
-                      ".png",
-                      "image/png",
-                      "video/*",
-                      ".mp4",
-                      ".mpeg",
-                      ".mpg",
-                      ".m4v",
-                      ".mov",
-                    ]}
+                    accept={["image/*", "video/*"]}
                     multiple={false}
                     labelText="Click or drag an image / video here"
                     onAddFiles={(evt: any, { addedFiles }: { addedFiles: File[] }) => {
                       if (!addedFiles || addedFiles.length === 0) return;
                       const f = addedFiles[0];
-                      const isImage = f.type.startsWith("image/");
+                      const mime = f.type || "";
+                      const n = f.name?.toLowerCase?.() || "";
+                      const isImage = mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(n);
+                      const isVideo = mime.startsWith("video/") || /\.(mp4|m4v|mov|mpeg|mpg|avi|mkv|webm)$/i.test(n);
+                      if (!isImage && !isVideo) return;
                       const url = URL.createObjectURL(f);
                       if (isImage) {
                         setImageFiles([f]);
@@ -485,9 +492,11 @@ export default function Home() {
               </div>
               {weightSourceKind === "local" ? (
                 <div style={{ marginTop: 12 }}>
-                  <FormLabel style={{ display: "block", marginBottom: 8 }}>Local Weight</FormLabel>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <FormLabel style={{ display: "block", marginBottom: 0 }}>Local Weight</FormLabel>
+                  </div>
                   <FileUploaderDropContainer
-                    accept={[ ".pt", ".onnx", ".engine" ]}
+                    accept={[ ".pt" ]}
                     multiple={false}
                     labelText="Click or drag a weight file here (.pt)"
                     onAddFiles={async (_evt: any, { addedFiles }: { addedFiles: File[] }) => {
@@ -497,18 +506,32 @@ export default function Home() {
                       form.append("file", f);
                       try {
                         await fetch("http://localhost:8002/upload-weight", { method: "POST", body: form });
+                        setUploadedWeightName(f.name);
+                        setSelectedWeight(f.name);
                         // Refresh list
                         const r = await fetch("http://localhost:8002/weights", { cache: "no-store" });
                         if (r.ok) {
                           const d = await r.json();
                           const list = Array.isArray(d?.weights) ? d.weights : [];
                           setAvailableWeights(list);
-                          if (list.length) setSelectedWeight(list[0]);
                         }
                       } catch {}
                     }}
                     style={{ height: 40, display: "flex", alignItems: "center" } as any}
                   />
+                  <div style={{ marginTop: 8 }}>
+                    {uploadedWeightName && (
+                      <FileUploaderItem
+                        key={uploadedWeightName}
+                        name={uploadedWeightName}
+                        status="complete"
+                        onDelete={() => {
+                          setUploadedWeightName("");
+                          setSelectedWeight("");
+                        }}
+                      />
+                    )}
+                  </div>
                 </div>
               ) : (
                 <Select
@@ -535,7 +558,9 @@ export default function Home() {
               <Button
                 kind="primary"
                 size="md"
+                disabled={!isWeightReady}
                 onClick={async () => {
+                  if (!isWeightReady) return;
                   // Single control for live detection on video sources
                   if (sourceKind === "local" && videoUrl) {
                     if (liveOverlay) {
