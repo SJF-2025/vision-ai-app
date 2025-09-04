@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { FiCamera } from "react-icons/fi";
+import { FiCamera, FiLink } from "react-icons/fi";
 import { Select, SelectItem, FileUploaderDropContainer, FileUploaderItem, Button, TextInput, FormLabel } from "@carbon/react";
 import { TrashCan } from "@carbon/icons-react";
 import { CheckmarkFilled } from "@carbon/icons-react";
@@ -198,6 +198,25 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKind]);
 
+  // When webcam is toggled on and the <video> is in the DOM, bind the stream and play
+  useEffect(() => {
+    if (!webcamOn) return;
+    const stream = webcamStreamRef.current;
+    const v = videoRef.current;
+    if (!stream || !v) return;
+    try {
+      // @ts-ignore
+      v.srcObject = stream;
+    } catch {
+      (v as any).srcObject = stream as any;
+    }
+    v.muted = true;
+    v.play().then(() => setIsPlaying(true)).catch(() => {});
+    const t = setTimeout(recomputeDrawMeta, 100);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webcamOn]);
+
   // Live overlay detection loop for video sources (local file or webcam)
   useEffect(() => {
     if (!(isPlaying && liveOverlay && (sourceKind === "local" || sourceKind === "webcam") && videoRef.current)) return;
@@ -245,18 +264,19 @@ export default function Home() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       webcamStreamRef.current = stream;
-      if (videoRef.current) {
+      // First set on so the <video> renders, then the effect above will bind stream
+      setWebcamOn(true);
+      // In case the video already exists (e.g., re-enable without unmount), bind immediately too
+      const v = videoRef.current;
+      if (v) {
         try {
           // @ts-ignore
-          videoRef.current.srcObject = stream;
+          v.srcObject = stream;
         } catch {
-          // Safari fallback
-          (videoRef.current as any).srcObject = stream;
+          (v as any).srcObject = stream as any;
         }
-        videoRef.current.muted = true;
-        await videoRef.current.play();
-        setIsPlaying(true);
-        setWebcamOn(true);
+        v.muted = true;
+        v.play().then(() => setIsPlaying(true)).catch(() => {});
         setTimeout(recomputeDrawMeta, 100);
       }
     } catch (err) {
@@ -273,10 +293,11 @@ export default function Home() {
     } catch {}
     webcamStreamRef.current = null;
     try {
-      if (videoRef.current) {
+      const v = videoRef.current;
+      if (v) {
         // @ts-ignore
-        videoRef.current.srcObject = null;
-        videoRef.current.pause();
+        v.srcObject = null;
+        v.pause();
       }
     } catch {}
     setWebcamOn(false);
@@ -364,12 +385,18 @@ export default function Home() {
                     onDragOver={sourceKind === "local" ? (e) => { e.preventDefault(); } : undefined}
                     onDrop={sourceKind === "local" ? (e) => { e.preventDefault(); const files = Array.from(e.dataTransfer.files); handleAddedFiles(files as File[]); } : undefined}
                   >
-                    <span style={{ color: "#0f62fe", display: "inline-flex", alignItems: "center", gap: 8, textAlign: "center", padding: 8 }}>
+                    <span style={{ color: (sourceKind === "snapshot" || sourceKind === "webcam") ? "#8d8d8d" : "#0f62fe", display: "inline-flex", alignItems: "center", gap: 8, textAlign: "center", padding: 8 }}>
                       {sourceKind === "webcam"
-                        ? "Click Start to enable the webcam"
+                        ? (<>
+                            Enable Webcam below. <FiCamera aria-hidden="true" />
+                          </>)
                         : sourceKind === "snapshot"
-                        ? "Add Snapshot URL in Source field below."
-                        : "Get started by adding an image or video here!"} <FiCamera aria-hidden="true" />
+                        ? (<>
+                            Add Source in Snapshot URL field. <FiLink aria-hidden="true" />
+                          </>)
+                        : (<>
+                            Get started by adding an image or video here! <FiCamera aria-hidden="true" />
+                          </>)}
                     </span>
                     <input
                       ref={fileInputRef}
@@ -507,8 +534,21 @@ export default function Home() {
                     </div>
                   </div>
                 ) : sourceKind === "webcam" ? (
-                  <div style={{ color: "#525252" }}>
-                    Your browser will request camera permission when you start detection.
+                  <div>
+                    <div style={{ color: "#525252", marginBottom: 8 }}>Enable your webcam to preview the stream.</div>
+                    <Button
+                      kind={webcamOn ? "danger--tertiary" : "secondary"}
+                      size="sm"
+                      onClick={async () => {
+                        if (webcamOn) {
+                          stopWebcam();
+                        } else {
+                          await startWebcam();
+                        }
+                      }}
+                    >
+                      {webcamOn ? "Disable Webcam" : "Enable Webcam"}
+                    </Button>
                   </div>
                 ) : null}
                 <div style={{ marginTop: 8 }}>
