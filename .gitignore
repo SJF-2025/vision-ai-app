@@ -46,7 +46,6 @@ htmlcov/
 # App data
 images/*
 videos/*
-weights/*
 !images/.gitkeep
 !videos/.gitkeep
-!weights/.gitkeep
+!weights/*

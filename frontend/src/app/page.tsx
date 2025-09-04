@@ -13,7 +13,7 @@ export default function Home() {
   const [imageUrl, setImageUrl] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [boxes, setBoxes] = useState<{ box: number[]; label: string; confidence: number }[]>([]);
-  const [sourceKind, setSourceKind] = useState<"local" | "youtube">("local");
+  const [sourceKind, setSourceKind] = useState<"local" | "youtube" | "snapshot">("local");
   const [youtubeUrl, setYoutubeUrl] = useState<string>("");
   const [weightSourceKind, setWeightSourceKind] = useState<"local" | "external">("local");
   const [youTubeVideoId, setYouTubeVideoId] = useState<string>("");
@@ -315,11 +315,6 @@ export default function Home() {
                     onPause={() => { setIsPlaying(false); }}
                     controls={false}
                   />
-                  <div style={{ position: "absolute", left: 12, bottom: 12 }}>
-                    <Button size="sm" kind="tertiary" onClick={() => {
-                      const v = videoRef.current; if (!v) return; if (v.paused) { v.play(); } else { v.pause(); }
-                    }}>{videoRef.current && !videoRef.current.paused ? "Pause" : "Play"}</Button>
-                  </div>
                 </div>
               ) : youTubeVideoId ? (
                 <iframe
@@ -428,9 +423,15 @@ export default function Home() {
             <div style={{ padding: "0 48px" }}>
               <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose File Source</h3>
               <div style={{ marginBottom: 16 }}>
-                <Select id="choose-source-kind" labelText="Source" value={sourceKind} onChange={(e) => setSourceKind(e.target.value as any)}>
+                <Select
+                  id="choose-source-kind"
+                  labelText="Source"
+                  value={sourceKind}
+                  onChange={(e) => setSourceKind(e.target.value as any)}
+                >
                   <SelectItem text="Local File" value="local" />
-                  <SelectItem text="YouTube" value="youtube" />
+                  <SelectItem text="Snapshot Stream" value="snapshot" />
+                  <SelectItem text="YouTube (disabled)" value="youtube" disabled />
                 </Select>
               </div>
               <div>
@@ -472,6 +473,13 @@ export default function Home() {
                     style={{ height: 40, display: "flex", alignItems: "center" } as any}
                   />
                   </>
+                ) : sourceKind === "snapshot" ? (
+                  <div>
+                    <div style={{ marginBottom: 8 }}>
+                      <FormLabel style={{ display: "block", marginBottom: 0 }}>Snapshot Stream</FormLabel>
+                    </div>
+                    <div style={{ color: "#8d8d8d" }}>A periodic snapshot stream source (coming soon).</div>
+                  </div>
                 ) : (
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
@@ -534,7 +542,7 @@ export default function Home() {
                   onChange={(e) => setWeightSourceKind(e.target.value as any)}
                 >
                   <SelectItem text="Local Weight" value="local" />
-                  <SelectItem text="External Weight" value="external" />
+                  <SelectItem text="External Weight (disabled)" value="external" disabled />
                 </Select>
               </div>
               {weightSourceKind === "local" ? (
@@ -576,9 +584,17 @@ export default function Home() {
                 kind="primary"
                 size="md"
                 onClick={async () => {
-                  // Toggle live overlay for video sources
+                  // Single control for live detection on video sources
                   if ((sourceKind === "local" && videoUrl) || (sourceKind === "youtube" && youTubeVideoId)) {
-                    setLiveOverlay((v) => !v);
+                    if (liveOverlay) {
+                      // Stop live detection
+                      setLiveOverlay(false);
+                      try { const v = videoRef.current; if (v) v.pause(); } catch {}
+                    } else {
+                      // Start live detection: enable overlay and start playback
+                      setLiveOverlay(true);
+                      try { const v = videoRef.current; if (v) await v.play(); } catch {}
+                    }
                     return;
                   }
                   // Single-shot detection for still images
@@ -596,11 +612,6 @@ export default function Home() {
                   ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection")
                   : "Start Object Detection"}
               </Button>
-              {((sourceKind === "local" && videoUrl) || (sourceKind === "youtube" && youTubeVideoId)) && (
-                <Button kind="secondary" size="md" style={{ marginLeft: 8 }} onClick={() => {
-                  setLiveOverlay((v) => !v);
-                }}>{liveOverlay ? "Live Overlay: ON" : "Live Overlay: OFF"}</Button>
-              )}
             </div>
           </div>
         </div>
