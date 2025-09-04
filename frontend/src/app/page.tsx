@@ -302,6 +302,8 @@ export default function Home() {
     } catch {}
     setWebcamOn(false);
     setIsPlaying(false);
+    setLiveOverlay(false);
+    setBoxes([]);
   };
 
   const handleResetViewer = () => {
@@ -444,23 +446,24 @@ export default function Home() {
                     </div>
                   );
                 })}
+                {(() => {
+                  const labelCounts = boxes.reduce<Record<string, number>>((acc, b) => {
+                    acc[b.label] = (acc[b.label] || 0) + 1;
+                    return acc;
+                  }, {});
+                  const entries = Object.entries(labelCounts);
+                  if (!entries.length) return null;
+                  return (
+                    <div style={{ position: "absolute", left: 8, bottom: 8, background: "rgba(255,255,255,0.9)", color: "#525252", fontSize: 14, padding: "4px 8px", borderRadius: 2 }}>
+                      Detected <strong>{entries.length} Categories</strong>: {entries.map(([k, v]) => `${k} (${v})`).join(", ")}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
 
-          {(() => {
-            const labelCounts = boxes.reduce<Record<string, number>>((acc, b) => {
-              acc[b.label] = (acc[b.label] || 0) + 1;
-              return acc;
-            }, {});
-            const entries = Object.entries(labelCounts);
-            if (!entries.length) return null;
-            return (
-              <div style={{ marginTop: 12, color: "#525252", fontSize: 16 }}>
-                Detected <strong>{entries.length} Categories</strong>: {entries.map(([k, v]) => `${k} (${v})`).join(", ")}
-              </div>
-            );
-          })()}
+          {/* categories are shown inside the preview, bottom-left, to avoid layout shifts */}
         </div>
       </section>
 
@@ -669,9 +672,15 @@ export default function Home() {
                   if (!isWeightReady) return;
                   // Webcam toggles
                   if (sourceKind === "webcam") {
-                    if (liveOverlay && webcamOn) {
+                    if (liveOverlay) {
+                      // Stop live detection but keep webcam preview
                       setLiveOverlay(false);
-                      stopWebcam();
+                      setBoxes([]);
+                      return;
+                    }
+                    if (webcamOn) {
+                      // Webcam already enabled; just start overlay
+                      setLiveOverlay(true);
                       return;
                     }
                     await startWebcam();
