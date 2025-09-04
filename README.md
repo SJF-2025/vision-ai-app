@@ -1,6 +1,13 @@
 # VisionAI
 
-Start the full stack (frontend + backend) in one command.
+## Introduction
+VisionAI is a simple full‑stack application for running object detection (YOLOv5) right from your browser. The frontend (Next.js + Carbon) lets you select a media source and start detection, while the backend (FastAPI + Ultralytics) loads YOLO weights and returns bounding boxes and labels. Everything is packaged in a Podman container so both services start with a single command.
+
+**Key capabilities**
+- **Sources**: Local image/video files, or a **Snapshot** URL (e.g., IP camera snapshot).
+- **Weights**: Upload a local `.pt` file or use the pretrained `yolov5s.pt`.
+- **Detection modes**: Single‑shot detection for images, and live overlay detection for videos.
+- **Containerized**: Uses a Python virtual environment inside the container; `weights/` on your machine is bind‑mounted for custom models.
 
 ## Quick Start
 From this folder (root):
