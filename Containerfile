@@ -5,6 +5,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG INCLUDE_TORCH=false
 
 FROM python:3.11-slim AS base
+ARG INCLUDE_TORCH=false
 WORKDIR /app
 
 # Install Node.js 20.x and system deps
@@ -25,14 +26,19 @@ COPY backend/requirements.txt /app/backend/requirements-full.txt
 RUN mkdir -p /app/backend \
  && printf "fastapi==0.115.0\nuvicorn[standard]==0.30.6\npillow==10.4.0\nnumpy\npython-multipart==0.0.9\nopencv-python-headless==4.10.0.84\nyt-dlp==2025.01.15\nimageio-ffmpeg==0.5.1\nimageio==2.35.1\n" > /app/backend/requirements-lite.txt
 
-RUN python -m pip install --no-cache-dir --upgrade pip
+RUN python -m venv /venv && /venv/bin/pip install --no-cache-dir --upgrade pip
 
 # Set default to lite install. Build with: --build-arg INCLUDE_TORCH=true to install full.
-RUN if [ "$INCLUDE_TORCH" = "true" ]; then \
-      python -m pip install --no-cache-dir -r /app/backend/requirements-full.txt ; \
+ENV PATH="/venv/bin:${PATH}"
+RUN echo "INCLUDE_TORCH=$INCLUDE_TORCH" && if [ "$INCLUDE_TORCH" = "true" ]; then \
+      pip install --no-cache-dir -r /app/backend/requirements-full.txt ; \
     else \
-      python -m pip install --no-cache-dir -r /app/backend/requirements-lite.txt ; \
+      pip install --no-cache-dir -r /app/backend/requirements-lite.txt ; \
     fi
+
+# Ensure headless OpenCV to avoid libGL dependency in containers
+RUN pip uninstall -y opencv-python opencv-contrib-python || true \
+    && pip install --no-cache-dir --upgrade --force-reinstall opencv-python-headless==4.10.0.84
 
 # ===== Frontend build =====
 COPY frontend/package*.json /app/frontend/
@@ -56,8 +62,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY --from=base /usr/local/lib/python3.11 /usr/local/lib/python3.11
-COPY --from=base /usr/local/bin /usr/local/bin
+# Copy venv from build stage
+COPY --from=base /venv /venv
+ENV PATH="/venv/bin:${PATH}"
 
 # App code
 COPY backend /app/backend

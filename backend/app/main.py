@@ -62,12 +62,10 @@ def load_model_v5(requested_weight: str | None = None):
     # Reload model if path changed or not yet loaded
     if _model_v5 is not None and _current_weight_path == model_path:
         return _model_v5
-    # Loads YOLOv5 via torch.hub
-    # Lazy import torch so simple endpoints like /weights don't require it
-    import torch  # type: ignore
-    _model_v5 = torch.hub.load(
-        "ultralytics/yolov5", "custom", path=model_path, force_reload=False
-    )
+    # Load YOLO model locally using Ultralytics without network access
+    # Lazy import so simple endpoints like /weights don't require it
+    from ultralytics import YOLO  # type: ignore
+    _model_v5 = YOLO(model_path)
     _current_weight_path = model_path
     return _model_v5
 
@@ -79,19 +77,23 @@ async def health() -> Dict[str, Any]:
 
 def infer(image: Image.Image) -> List[Dict[str, Any]]:
     model = load_model_v5()
-    # PIL -> numpy BGR for YOLOv5 hub model
-    frame = np.array(image)[:, :, ::-1]
-    res = model(frame)
-    names = model.names
+    frame = np.array(image)  # RGB
+    results = model(frame)
+    r = results[0]
+    names = getattr(r, "names", getattr(model, "names", {}))
     dets: List[Dict[str, Any]] = []
-    for *xyxy, conf, cls in res.xyxy[0].tolist():
-        dets.append(
-            {
-                "label": names[int(cls)],
-                "confidence": float(conf),
-                "box": [float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])],
-            }
-        )
+    boxes = getattr(r, "boxes", None)
+    if boxes is None or boxes.xyxy is None:
+        return dets
+    xyxy = boxes.xyxy.cpu().numpy()
+    conf = boxes.conf.cpu().numpy()
+    cls = boxes.cls.cpu().numpy()
+    for i in range(xyxy.shape[0]):
+        x1, y1, x2, y2 = [float(v) for v in xyxy[i].tolist()]
+        c = float(conf[i])
+        k = int(cls[i])
+        label = names[k] if isinstance(names, dict) and k in names else str(k)
+        dets.append({"label": label, "confidence": c, "box": [x1, y1, x2, y2]})
     return dets
 
 
