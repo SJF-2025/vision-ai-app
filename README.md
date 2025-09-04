@@ -20,5 +20,13 @@ From this folder:
 podman machine start
 ```
 
+## Downloads
+- Podman Desktop (GUI for Mac/Windows/Linux): https://podman-desktop.io/
+- Podman CLI (all OS): https://podman.io/docs/installation
+
+Which one should I use?
+- Use Desktop if you want a simple GUI and minimal terminal use.
+- Use CLI if you're comfortable in terminal or need scripts/CI.
+
 ## Weights
 Place your YOLO `.pt` files in `weights/`. They are mounted read-only into the container.
