@@ -88,3 +88,60 @@ Which one should I use?
 
 ## Weights
 Place your YOLO `.pt` files in `weights/`. They are mounted read-only into the container.
+
+---
+
+## Deploying to Google Cloud Run
+This repo can be deployed to Cloud Run as two services: a backend (FastAPI) and a frontend (Next.js). Each folder contains a Cloud Run–ready `Dockerfile` and `.dockerignore`.
+
+### Prerequisites
+- gcloud CLI installed and authenticated
+- A Google Cloud project selected: `gcloud config set project <PROJECT_ID>`
+- Artifact Registry repository created (optional if using gcloud build from local)
+
+### 1) Backend (FastAPI)
+From repo root:
+```bash
+cd backend
+# Build
+gcloud builds submit --tag gcr.io/$(gcloud config get-value project)/visionai-backend
+# Deploy
+gcloud run deploy visionai-backend \
+  --image gcr.io/$(gcloud config get-value project)/visionai-backend \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --port 8002 \
+  --set-env-vars FRONTEND_CORS_ORIGIN=https://<your-vercel-or-frontend-domain>
+```
+Notes:
+- Cloud Run will inject `$PORT`; the Dockerfile respects it. `--port 8002` is the container’s internal default for local parity.
+- The backend exposes endpoints: `/health`, `/weights`, `/upload-weight`, `/predict`, and WebSockets at `/ws/*`.
+- For large YOLO weights, consider uploading via `/upload-weight` at runtime or mounting a volume with Filestore (if needed).
+
+### 2) Frontend (Next.js)
+From repo root:
+```bash
+cd frontend
+# Build
+gcloud builds submit --tag gcr.io/$(gcloud config get-value project)/visionai-frontend
+# Deploy
+gcloud run deploy visionai-frontend \
+  --image gcr.io/$(gcloud config get-value project)/visionai-frontend \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --port 3000 \
+  --set-env-vars NEXT_PUBLIC_BACKEND_HTTP=https://<your-backend-run-url>
+```
+Notes:
+- The frontend reads `NEXT_PUBLIC_BACKEND_HTTP` to call the backend.
+- After both services are deployed, open the frontend URL, and it should connect to the backend.
+
+### Optional: Custom domains
+- Map a custom domain to each service via Cloud Run console or gcloud: `gcloud run domain-mappings`.
+
+### Troubleshooting
+- 404s on `/weights`: verify backend URL and CORS.
+- CORS errors: set `FRONTEND_CORS_ORIGIN` on backend to the exact frontend origin (e.g., `https://visionai-frontend-xxxxx-uc.a.run.app`).
+- Cold starts: Cloud Run may cold start; consider minimum instances if needed.
