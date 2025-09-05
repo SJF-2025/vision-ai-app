@@ -1,51 +1,16 @@
-# Node / Next.js
+# Node
 node_modules/
-.next/
-.turbo/
-out/
-dist/
-.eslintcache
 
 # Python
-__pycache__/
-*.py[cod]
-*.pyo
-.venv/
-venv/
-env/
-*.egg-info/
-build/
-pip-wheel-metadata/
+**/__pycache__/
+*.pyc
 
-# Logs & temp
-*.log
-logs/
-tmp/
-temp/
-.cache/
-
-# Env files
+# Local artifacts
+.devcontainer/
 .env
-.env.*
-!.env.example
+*.log
 
-# Coverage/Testing
-.coverage
-coverage*/
-htmlcov/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# OS/IDE
-.DS_Store
-.idea/
-.vscode/
-*.code-workspace
-
-# App data
-images/*
-videos/*
-!images/.gitkeep
-!videos/.gitkeep
-!weights/*
+# Heavy assets not needed in git
+weights/
+images/
+videos/

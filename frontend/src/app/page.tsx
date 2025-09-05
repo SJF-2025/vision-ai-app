@@ -7,6 +7,7 @@ import { TrashCan } from "@carbon/icons-react";
 import { CheckmarkFilled } from "@carbon/icons-react";
 
 export default function Home() {
+  const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_HTTP || "http://localhost:8002";
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [availableWeights, setAvailableWeights] = useState<string[]>([]);
   const [selectedWeight, setSelectedWeight] = useState<string>("");
@@ -35,13 +36,21 @@ export default function Home() {
   });
   const [isPlaying, setIsPlaying] = useState(false);
   const [liveOverlay, setLiveOverlay] = useState(false);
+  const [isNarrow, setIsNarrow] = useState(false);
 
   const isWeightReady = weightSourceKind === "local" ? !!uploadedWeightName : !!selectedWeight;
 
   useEffect(() => {
+    const onResize = () => setIsNarrow(typeof window !== "undefined" && window.innerWidth < 1100);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
     const candidates = [
       process.env.NEXT_PUBLIC_BACKEND_HTTP && `${process.env.NEXT_PUBLIC_BACKEND_HTTP}/weights`,
-      "http://localhost:8002/weights",
+      `${BACKEND_BASE}/weights`,
       "http://127.0.0.1:8002/weights",
     ].filter(Boolean) as string[];
 
@@ -65,7 +74,6 @@ export default function Home() {
       }
     };
 
-    // Initial try then poll a few times
     fetchOnce();
     timer = setInterval(() => {
       attempts += 1;
@@ -77,25 +85,20 @@ export default function Home() {
     }, 1500);
 
     return () => timer && clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Ensure a default selection when switching to pretrained
   useEffect(() => {
     if (weightSourceKind === "pretrained" && !selectedWeight) {
       setSelectedWeight("yolov5s.pt");
     }
   }, [weightSourceKind, selectedWeight]);
 
-  // Revoke object URLs when files change/unmount
   useEffect(() => {
     return () => {
       if (imageUrl && imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
       if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
-      // Ensure webcam is stopped on unmount
       stopWebcam();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleAddedFiles = (addedFiles: File[]) => {
@@ -120,7 +123,6 @@ export default function Home() {
     }
   };
 
-  // Compute how the image is fitted inside the container so we can scale boxes
   const recomputeDrawMeta = () => {
     const container = containerRef.current;
     const img = imgRef.current;
@@ -143,10 +145,8 @@ export default function Home() {
     const handle = () => recomputeDrawMeta();
     window.addEventListener("resize", handle);
     return () => window.removeEventListener("resize", handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update preview when snapshot URL changes
   useEffect(() => {
     if (sourceKind !== "snapshot") return;
     if (snapshotUrl) {
@@ -156,23 +156,18 @@ export default function Home() {
     }
   }, [snapshotUrl, sourceKind]);
 
-  // Reset viewer state when changing source kind
   useEffect(() => {
-    // Clear detection boxes and live states on any switch
     setBoxes([]);
     setIsPlaying(false);
     setLiveOverlay(false);
 
     if (sourceKind === "local") {
-      // Switched to Local: clear remote preview
       setSnapshotUrl("");
       stopWebcam();
-      // Keep previously selected local file if any; clear remote image preview
       if (imageUrl && !imageUrl.startsWith("blob:")) {
         setImageUrl("");
       }
     } else if (sourceKind === "snapshot") {
-      // Switched to Snapshot: clear local file/video previews and webcam
       if (imageUrl && imageUrl.startsWith("blob:")) {
         try { URL.revokeObjectURL(imageUrl); } catch {}
       }
@@ -184,7 +179,6 @@ export default function Home() {
       setImageUrl("");
       setVideoUrl("");
     } else if (sourceKind === "webcam") {
-      // Switching to webcam: clear any file/snapshot previews
       if (imageUrl && imageUrl.startsWith("blob:")) {
         try { URL.revokeObjectURL(imageUrl); } catch {}
       }
@@ -195,10 +189,8 @@ export default function Home() {
       setImageUrl("");
       setVideoUrl("");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKind]);
 
-  // When webcam is toggled on and the <video> is in the DOM, bind the stream and play
   useEffect(() => {
     if (!webcamOn) return;
     const stream = webcamStreamRef.current;
@@ -214,10 +206,8 @@ export default function Home() {
     v.play().then(() => setIsPlaying(true)).catch(() => {});
     const t = setTimeout(recomputeDrawMeta, 100);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webcamOn]);
 
-  // Live overlay detection loop for video sources (local file or webcam)
   useEffect(() => {
     if (!(isPlaying && liveOverlay && (sourceKind === "local" || sourceKind === "webcam") && videoRef.current)) return;
     let cancelled = false;
@@ -242,31 +232,24 @@ export default function Home() {
           form.append("file", new File([blob], "frame.jpg", { type: "image/jpeg" }));
           const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
           try {
-            const res = await fetch(`http://localhost:8002/predict${q}`, { method: "POST", body: form });
+            const res = await fetch(`${BACKEND_BASE}/predict${q}`, { method: "POST", body: form });
             const data = await res.json();
             if (!cancelled) setBoxes(Array.isArray(data?.objects) ? data.objects : []);
-          } catch {
-            // ignore transient errors
-          }
+          } catch {}
         }
       }
       lastSent = now;
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { cancelled = true; };
   }, [isPlaying, liveOverlay, selectedWeight, sourceKind]);
 
   const startWebcam = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       webcamStreamRef.current = stream;
-      // First set on so the <video> renders, then the effect above will bind stream
       setWebcamOn(true);
-      // In case the video already exists (e.g., re-enable without unmount), bind immediately too
       const v = videoRef.current;
       if (v) {
         try {
@@ -287,9 +270,7 @@ export default function Home() {
   const stopWebcam = () => {
     try {
       const s = webcamStreamRef.current;
-      if (s) {
-        s.getTracks().forEach((t) => t.stop());
-      }
+      if (s) s.getTracks().forEach((t) => t.stop());
     } catch {}
     webcamStreamRef.current = null;
     try {
@@ -336,18 +317,17 @@ export default function Home() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: 16,
+          padding: isNarrow ? 8 : 16,
           marginTop: 16,
           marginBottom: 8,
         }}
       >
-        <div style={{ width: "100%", maxWidth: 960 }}>
-          { /* Border switches to dashed when empty, solid when media is present */ }
-          { /* hasMedia used below via inline expression */ }
+        <div style={{ width: "100%", maxWidth: "min(1100px, 90vw)" }}>
           <div
             style={{
               width: "100%",
               aspectRatio: "16 / 9",
+              maxHeight: "52vh",
               border: (imageUrl || videoUrl || webcamOn) ? "1px solid #8d8d8d" : "1px dashed #8d8d8d",
               borderRadius: 0,
               display: "flex",
@@ -389,16 +369,10 @@ export default function Home() {
                   >
                     <span style={{ color: (sourceKind === "snapshot" || sourceKind === "webcam") ? "#8d8d8d" : "#0f62fe", display: "inline-flex", alignItems: "center", gap: 8, textAlign: "center", padding: 8 }}>
                       {sourceKind === "webcam"
-                        ? (<>
-                            Enable Webcam below. <FiCamera aria-hidden="true" />
-                          </>)
+                        ? (<>Enable Webcam below. <FiCamera aria-hidden="true" /></>)
                         : sourceKind === "snapshot"
-                        ? (<>
-                            Add Source in Snapshot URL field. <FiLink aria-hidden="true" />
-                          </>)
-                        : (<>
-                            Get started by adding an image or video here! <FiCamera aria-hidden="true" />
-                          </>)}
+                        ? (<>Add Source in Snapshot URL field. <FiLink aria-hidden="true" /></>)
+                        : (<>Get started by adding an image or video here! <FiCamera aria-hidden="true" /></>)}
                     </span>
                     <input
                       ref={fileInputRef}
@@ -413,7 +387,6 @@ export default function Home() {
                     />
                   </div>
               )}
-              {/* Controls overlay: clear/reset button */}
               {(imageUrl || videoUrl || webcamOn) && (
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 3 }}>
                   <div style={{ position: "absolute", right: 12, bottom: 12, pointerEvents: "auto" }}>
@@ -429,8 +402,6 @@ export default function Home() {
                 </div>
               )}
 
-              
-              {/* Draw boxes in overlay above media */}
               <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2 }}>
                 {boxes.map((d, idx) => {
                   const [x1, y1, x2, y2] = d.box;
@@ -463,259 +434,307 @@ export default function Home() {
             </div>
           </div>
 
-          {/* categories are shown inside the preview, bottom-left, to avoid layout shifts */}
+          {/* categories overlay handled above to avoid layout shift */}
         </div>
       </section>
 
-      <section style={{ padding: 16, borderTop: "1px solid #e0e0e0", background: "#fff" }}>
-        <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto", marginTop: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr 1px 1fr", columnGap: 0, alignItems: "start" }}>
-            {/* Left: 1. Add Source */}
-            <div style={{ padding: "0 48px" }}>
-              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose File Source</h3>
-              <div style={{ marginBottom: 16 }}>
-                <Select
-                  id="choose-source-kind"
-                  labelText="Source"
-                  value={sourceKind}
-                  onChange={(e) => setSourceKind(e.target.value as any)}
-                >
-                  <SelectItem text="Local File" value="local" />
-                  <SelectItem text="Snapshot" value="snapshot" />
-                  <SelectItem text="Webcam" value="webcam" />
-                </Select>
-              </div>
-              <div>
-                {sourceKind === "local" ? (
-                  <>
-                    <FormLabel style={{ display: "block", marginBottom: 8 }}>File</FormLabel>
-                    <FileUploaderDropContainer
-                    accept={["image/*", "video/*"]}
-                    multiple={false}
-                    labelText="Click or drag an image / video here"
-                    onAddFiles={(evt: any, { addedFiles }: { addedFiles: File[] }) => {
-                      if (!addedFiles || addedFiles.length === 0) return;
-                      const f = addedFiles[0];
-                      const mime = f.type || "";
-                      const n = f.name?.toLowerCase?.() || "";
-                      const isImage = mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(n);
-                      const isVideo = mime.startsWith("video/") || /\.(mp4|m4v|mov|mpeg|mpg|avi|mkv|webm)$/i.test(n);
-                      if (!isImage && !isVideo) return;
-                      const url = URL.createObjectURL(f);
-                      if (isImage) {
-                        setImageFiles([f]);
-                        setImageUrl(url);
-                        if (videoUrl) URL.revokeObjectURL(videoUrl);
-                        setVideoUrl("");
-                      } else {
-                        setImageFiles([]);
-                        if (imageUrl) URL.revokeObjectURL(imageUrl);
-                        setImageUrl("");
-                        setVideoUrl(url);
-                      }
-                    }}
-                    style={{ height: 40, display: "flex", alignItems: "center" } as any}
-                  />
-                  </>
-                ) : sourceKind === "snapshot" ? (
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                      <FormLabel style={{ display: "block", marginBottom: 0 }}>Snapshot URL</FormLabel>
-                      {snapshotUrl && (
-                        <CheckmarkFilled size={16} aria-hidden="true" style={{ color: "#0f62fe" }} />
-                      )}
-                    </div>
-                    <div>
-                      <TextInput
-                        id="snapshot-url-input"
-                        hideLabel
-                        labelText="Snapshot URL"
-                        placeholder="http://<ip-address>/snapshot.jpg"
-                        value={snapshotUrl}
-                        onChange={(e: any) => setSnapshotUrl(e.target.value)}
+      <section style={{ padding: isNarrow ? 8 : 16, borderTop: "1px solid #e0e0e0", background: "#fff" }}>
+        <div style={{ width: "100%", maxWidth: "min(1100px, 90vw)", margin: "0 auto", marginTop: 16 }}>
+          {isNarrow ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ padding: "0 8px" }}>
+                <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose File Source</h3>
+                <div style={{ marginBottom: 16 }}>
+                  <Select id="choose-source-kind" labelText="Source" value={sourceKind} onChange={(e) => setSourceKind(e.target.value as any)}>
+                    <SelectItem text="Local File" value="local" />
+                    <SelectItem text="Snapshot" value="snapshot" />
+                    <SelectItem text="Webcam" value="webcam" />
+                  </Select>
+                </div>
+                {/* reuse same body from wide layout */}
+                {/* START source body */}
+                <div>
+                  {sourceKind === "local" ? (
+                    <>
+                      <FormLabel style={{ display: "block", marginBottom: 8 }}>File</FormLabel>
+                      <FileUploaderDropContainer
+                        accept={["image/*", "video/*"]}
+                        multiple={false}
+                        labelText="Click or drag an image / video here"
+                        onAddFiles={(evt: any, { addedFiles }: { addedFiles: File[] }) => {
+                          if (!addedFiles || addedFiles.length === 0) return;
+                          const f = addedFiles[0];
+                          const mime = f.type || "";
+                          const n = f.name?.toLowerCase?.() || "";
+                          const isImage = mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(n);
+                          const isVideo = mime.startsWith("video/") || /\.(mp4|m4v|mov|mpeg|mpg|avi|mkv|webm)$/i.test(n);
+                          if (!isImage && !isVideo) return;
+                          const url = URL.createObjectURL(f);
+                          if (isImage) {
+                            setImageFiles([f]);
+                            setImageUrl(url);
+                            if (videoUrl) URL.revokeObjectURL(videoUrl);
+                            setVideoUrl("");
+                          } else {
+                            setImageFiles([]);
+                            if (imageUrl) URL.revokeObjectURL(imageUrl);
+                            setImageUrl("");
+                            setVideoUrl(url);
+                          }
+                        }}
+                        style={{ height: 40, display: "flex", alignItems: "center" } as any}
                       />
+                    </>
+                  ) : sourceKind === "snapshot" ? (
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                        <FormLabel style={{ display: "block", marginBottom: 0 }}>Snapshot URL</FormLabel>
+                        {snapshotUrl && (
+                          <CheckmarkFilled size={16} aria-hidden="true" style={{ color: "#0f62fe" }} />
+                        )}
+                      </div>
+                      <div>
+                        <TextInput id="snapshot-url-input" hideLabel labelText="Snapshot URL" placeholder="http://<ip-address>/snapshot.jpg" value={snapshotUrl} onChange={(e: any) => setSnapshotUrl(e.target.value)} />
+                      </div>
                     </div>
-                  </div>
-                ) : sourceKind === "webcam" ? (
-                  <div>
-                    <Button
-                      kind={webcamOn ? "danger--tertiary" : "primary"}
-                      size="md"
-                      onClick={async () => {
-                        if (webcamOn) {
-                          stopWebcam();
-                        } else {
-                          await startWebcam();
-                        }
-                      }}
-                    >
-                      {webcamOn ? "Disable Webcam" : "Enable Webcam"}
-                    </Button>
-                  </div>
-                ) : null}
-                <div style={{ marginTop: 8 }}>
-                  {imageFiles.map((f) => (
-                    <FileUploaderItem
-                      key={f.name}
-                      name={f.name}
-                      status="complete"
-                      onDelete={() => {
-                        setImageFiles([]);
-                        if (imageUrl) URL.revokeObjectURL(imageUrl);
-                        setImageUrl("");
-                      }}
-                    />
-                  ))}
-                  {!imageFiles.length && videoUrl && (
-                    <FileUploaderItem
-                      key={videoUrl}
-                      name={videoUrl.split("/").pop() || "video"}
-                      status="complete"
-                      onDelete={() => {
-                        if (videoUrl) URL.revokeObjectURL(videoUrl);
-                        setVideoUrl("");
-                      }}
-                    />
+                  ) : (
+                    <div>
+                      <Button kind={webcamOn ? "danger--tertiary" : "primary"} size="md" onClick={async () => { if (webcamOn) { stopWebcam(); } else { await startWebcam(); } }}> {webcamOn ? "Disable Webcam" : "Enable Webcam"}</Button>
+                    </div>
                   )}
                 </div>
+                {/* END source body */}
               </div>
-            </div>
 
-            {/* Divider */}
-            <div style={{ width: 1, background: "#e0e0e0", height: "100%", minHeight: 120 }} />
+              <div style={{ height: 1, background: "#e0e0e0" }} />
 
-            {/* Right: 2. Import Model Weight */}
-            <div style={{ padding: "0 48px" }}>
-              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>2. Import Model Weight</h3>
-              <div style={{ marginBottom: 16 }}>
-                <Select
-                  id="weight-source-kind"
-                  labelText="Source"
-                  value={weightSourceKind}
-                  onChange={(e) => setWeightSourceKind(e.target.value as any)}
-                >
-                  <SelectItem text="Local Weight" value="local" />
-                  <SelectItem text="Pretrained Weight" value="pretrained" />
-                </Select>
-              </div>
-              {weightSourceKind === "local" ? (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                    <FormLabel style={{ display: "block", marginBottom: 0 }}>Local Weight</FormLabel>
-                  </div>
-                  <FileUploaderDropContainer
-                    accept={[ ".pt" ]}
-                    multiple={false}
-                    labelText="Click or drag a weight file here (.pt)"
-                    onAddFiles={async (_evt: any, { addedFiles }: { addedFiles: File[] }) => {
-                      if (!addedFiles || !addedFiles.length) return;
-                      const f = addedFiles[0];
-                      const form = new FormData();
-                      form.append("file", f);
-                      try {
-                        await fetch("http://localhost:8002/upload-weight", { method: "POST", body: form });
-                        setUploadedWeightName(f.name);
-                        setSelectedWeight(f.name);
-                        // Refresh list
-                        const r = await fetch("http://localhost:8002/weights", { cache: "no-store" });
-                        if (r.ok) {
-                          const d = await r.json();
-                          const list = Array.isArray(d?.weights) ? d.weights : [];
-                          setAvailableWeights(list);
-                        }
-                      } catch {}
-                    }}
-                    style={{ height: 40, display: "flex", alignItems: "center" } as any}
-                  />
-                  <div style={{ marginTop: 8 }}>
-                    {uploadedWeightName && (
-                      <FileUploaderItem
-                        key={uploadedWeightName}
-                        name={uploadedWeightName}
-                        status="complete"
-                        onDelete={() => {
-                          setUploadedWeightName("");
-                          setSelectedWeight("");
-                        }}
-                      />
-                    )}
-                  </div>
+              <div style={{ padding: "0 8px" }}>
+                <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>2. Import Model Weight</h3>
+                <div style={{ marginBottom: 16 }}>
+                  <Select id="weight-source-kind" labelText="Source" value={weightSourceKind} onChange={(e) => setWeightSourceKind(e.target.value as any)}>
+                    <SelectItem text="Local Weight" value="local" />
+                    <SelectItem text="Pretrained Weight" value="pretrained" />
+                  </Select>
                 </div>
-              ) : (
-                <Select
-                  id="pretrained-weight-select"
-                  labelText="Pretrained Weight"
-                  value={selectedWeight || "yolov5s.pt"}
-                  onChange={(e) => setSelectedWeight(e.target.value)}
-                  style={{ minWidth: 260 }}
-                >
-                  <SelectItem text="yolov5s.pt" value="yolov5s.pt" />
-                </Select>
-              )}
-            </div>
+                {weightSourceKind === "local" ? (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                      <FormLabel style={{ display: "block", marginBottom: 0 }}>Local Weight</FormLabel>
+                    </div>
+                    <FileUploaderDropContainer
+                      accept={[ ".pt" ]}
+                      multiple={false}
+                      labelText="Click or drag a weight file here (.pt)"
+                      onAddFiles={async (_evt: any, { addedFiles }: { addedFiles: File[] }) => {
+                        if (!addedFiles || !addedFiles.length) return;
+                        const f = addedFiles[0];
+                        const form = new FormData();
+                        form.append("file", f);
+                        try {
+                          await fetch(`${BACKEND_BASE}/upload-weight`, { method: "POST", body: form });
+                          setUploadedWeightName(f.name);
+                          setSelectedWeight(f.name);
+                          const r = await fetch(`${BACKEND_BASE}/weights`, { cache: "no-store" });
+                          if (r.ok) {
+                            const d = await r.json();
+                            const list = Array.isArray(d?.weights) ? d.weights : [];
+                            setAvailableWeights(list);
+                          }
+                        } catch {}
+                      }}
+                      style={{ height: 40, display: "flex", alignItems: "center" } as any}
+                    />
+                    <div style={{ marginTop: 8 }}>
+                      {uploadedWeightName && (
+                        <FileUploaderItem key={uploadedWeightName} name={uploadedWeightName} status="complete" onDelete={() => { setUploadedWeightName(""); setSelectedWeight(""); }} />
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <Select id="pretrained-weight-select" labelText="Pretrained Weight" value={selectedWeight || "yolov5s.pt"} onChange={(e) => setSelectedWeight(e.target.value)} style={{ minWidth: 260 }}>
+                    <SelectItem text="yolov5s.pt" value="yolov5s.pt" />
+                  </Select>
+                )}
+              </div>
 
-            {/* Divider */}
-            <div style={{ width: 1, background: "#e0e0e0", height: "100%", minHeight: 120 }} />
+              <div style={{ height: 1, background: "#e0e0e0" }} />
 
-            {/* 3. Start Detection */}
-            <div style={{ padding: "0 48px" }}>
-              <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>3. Start Object Detection</h3>
-              <p style={{ margin: "0 0 12px", color: "#525252" }}>
-                Start object detection using the selected source and uploaded model weights.
-              </p>
-              <Button
-                kind="primary"
-                size="md"
-                disabled={!isWeightReady}
-                onClick={async () => {
+              <div style={{ padding: "0 8px" }}>
+                <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>3. Start Object Detection</h3>
+                <p style={{ margin: "0 0 12px", color: "#525252" }}>
+                  Start object detection using the selected source and uploaded model weights.
+                </p>
+                <Button kind="primary" size="md" disabled={!isWeightReady} onClick={async () => {
                   if (!isWeightReady) return;
-                  // Webcam toggles
                   if (sourceKind === "webcam") {
-                    if (liveOverlay) {
-                      // Stop live detection but keep webcam preview
-                      setLiveOverlay(false);
-                      setBoxes([]);
-                      return;
-                    }
-                    if (webcamOn) {
-                      // Webcam already enabled; just start overlay
-                      setLiveOverlay(true);
-                      return;
-                    }
-                    await startWebcam();
-                    setLiveOverlay(true);
-                    return;
+                    if (liveOverlay) { setLiveOverlay(false); setBoxes([]); return; }
+                    if (webcamOn) { setLiveOverlay(true); return; }
+                    await startWebcam(); setLiveOverlay(true); return;
                   }
-                  // Single control for live detection on local video file
                   if (sourceKind === "local" && videoUrl) {
-                    if (liveOverlay) {
-                      // Stop live detection
-                      setLiveOverlay(false);
-                      try { const v = videoRef.current; if (v) v.pause(); } catch {}
-                    } else {
-                      // Start live detection: enable overlay and start playback
-                      setLiveOverlay(true);
-                      try { const v = videoRef.current; if (v) await v.play(); } catch {}
-                    }
+                    if (liveOverlay) { setLiveOverlay(false); try { const v = videoRef.current; if (v) v.pause(); } catch {} } else { setLiveOverlay(true); try { const v = videoRef.current; if (v) await v.play(); } catch {} }
                     return;
                   }
-                  // Single-shot detection for still images (including snapshot URL)
                   const form = new FormData();
                   if (!imageFiles.length && !imageUrl) return;
                   const file = imageFiles[0];
                   form.append("file", file);
                   const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
-                  const res = await fetch(`http://localhost:8002/predict${q}`, { method: "POST", body: form });
+                  const res = await fetch(`${BACKEND_BASE}/predict${q}`, { method: "POST", body: form });
                   const data = await res.json();
                   setBoxes(Array.isArray(data?.objects) ? data.objects : []);
-                }}
-              >
-                {(sourceKind === "local" && videoUrl) || sourceKind === "webcam"
-                  ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection")
-                  : "Start Object Detection"}
-              </Button>
+                }}>
+                  {(sourceKind === "local" && videoUrl) || sourceKind === "webcam" ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection") : "Start Object Detection"}
+                </Button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr 1px 1fr", columnGap: 0, alignItems: "start" }}>
+              {/* Left: 1. Add Source */}
+              <div style={{ padding: "0 48px" }}>
+                <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose File Source</h3>
+                <div style={{ marginBottom: 16 }}>
+                  <Select id="choose-source-kind" labelText="Source" value={sourceKind} onChange={(e) => setSourceKind(e.target.value as any)}>
+                    <SelectItem text="Local File" value="local" />
+                    <SelectItem text="Snapshot" value="snapshot" />
+                    <SelectItem text="Webcam" value="webcam" />
+                  </Select>
+                </div>
+                <div>
+                  {sourceKind === "local" ? (
+                    <>
+                      <FormLabel style={{ display: "block", marginBottom: 8 }}>File</FormLabel>
+                      <FileUploaderDropContainer
+                      accept={["image/*", "video/*"]}
+                      multiple={false}
+                      labelText="Click or drag an image / video here"
+                      onAddFiles={(evt: any, { addedFiles }: { addedFiles: File[] }) => {
+                        if (!addedFiles || addedFiles.length === 0) return;
+                        const f = addedFiles[0];
+                        const mime = f.type || "";
+                        const n = f.name?.toLowerCase?.() || "";
+                        const isImage = mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(n);
+                        const isVideo = mime.startsWith("video/") || /\.(mp4|m4v|mov|mpeg|mpg|avi|mkv|webm)$/i.test(n);
+                        if (!isImage && !isVideo) return;
+                        const url = URL.createObjectURL(f);
+                        if (isImage) {
+                          setImageFiles([f]);
+                          setImageUrl(url);
+                          if (videoUrl) URL.revokeObjectURL(videoUrl);
+                          setVideoUrl("");
+                        } else {
+                          setImageFiles([]);
+                          if (imageUrl) URL.revokeObjectURL(imageUrl);
+                          setImageUrl("");
+                          setVideoUrl(url);
+                        }
+                      }}
+                      style={{ height: 40, display: "flex", alignItems: "center" } as any}
+                    />
+                    </>
+                  ) : sourceKind === "snapshot" ? (
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                        <FormLabel style={{ display: "block", marginBottom: 0 }}>Snapshot URL</FormLabel>
+                        {snapshotUrl && (
+                          <CheckmarkFilled size={16} aria-hidden="true" style={{ color: "#0f62fe" }} />
+                        )}
+                      </div>
+                      <div>
+                        <TextInput id="snapshot-url-input" hideLabel labelText="Snapshot URL" placeholder="http://<ip-address>/snapshot.jpg" value={snapshotUrl} onChange={(e: any) => setSnapshotUrl(e.target.value)} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <Button kind={webcamOn ? "danger--tertiary" : "primary"} size="md" onClick={async () => { if (webcamOn) { stopWebcam(); } else { await startWebcam(); } }}> {webcamOn ? "Disable Webcam" : "Enable Webcam"}</Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ width: 1, background: "#e0e0e0", height: "100%", minHeight: 120 }} />
+
+              <div style={{ padding: "0 48px" }}>
+                <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>2. Import Model Weight</h3>
+                <div style={{ marginBottom: 16 }}>
+                  <Select id="weight-source-kind" labelText="Source" value={weightSourceKind} onChange={(e) => setWeightSourceKind(e.target.value as any)}>
+                    <SelectItem text="Local Weight" value="local" />
+                    <SelectItem text="Pretrained Weight" value="pretrained" />
+                  </Select>
+                </div>
+                {weightSourceKind === "local" ? (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                      <FormLabel style={{ display: "block", marginBottom: 0 }}>Local Weight</FormLabel>
+                    </div>
+                    <FileUploaderDropContainer
+                      accept={[ ".pt" ]}
+                      multiple={false}
+                      labelText="Click or drag a weight file here (.pt)"
+                      onAddFiles={async (_evt: any, { addedFiles }: { addedFiles: File[] }) => {
+                        if (!addedFiles || !addedFiles.length) return;
+                        const f = addedFiles[0];
+                        const form = new FormData();
+                        form.append("file", f);
+                        try {
+                          await fetch(`${BACKEND_BASE}/upload-weight`, { method: "POST", body: form });
+                          setUploadedWeightName(f.name);
+                          setSelectedWeight(f.name);
+                          const r = await fetch(`${BACKEND_BASE}/weights`, { cache: "no-store" });
+                          if (r.ok) {
+                            const d = await r.json();
+                            const list = Array.isArray(d?.weights) ? d.weights : [];
+                            setAvailableWeights(list);
+                          }
+                        } catch {}
+                      }}
+                      style={{ height: 40, display: "flex", alignItems: "center" } as any}
+                    />
+                    <div style={{ marginTop: 8 }}>
+                      {uploadedWeightName && (
+                        <FileUploaderItem key={uploadedWeightName} name={uploadedWeightName} status="complete" onDelete={() => { setUploadedWeightName(""); setSelectedWeight(""); }} />
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <Select id="pretrained-weight-select" labelText="Pretrained Weight" value={selectedWeight || "yolov5s.pt"} onChange={(e) => setSelectedWeight(e.target.value)} style={{ minWidth: 260 }}>
+                    <SelectItem text="yolov5s.pt" value="yolov5s.pt" />
+                  </Select>
+                )}
+              </div>
+
+              <div style={{ width: 1, background: "#e0e0e0", height: "100%", minHeight: 120 }} />
+
+              <div style={{ padding: "0 48px" }}>
+                <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>3. Start Object Detection</h3>
+                <p style={{ margin: "0 0 12px", color: "#525252" }}>
+                  Start object detection using the selected source and uploaded model weights.
+                </p>
+                <Button kind="primary" size="md" disabled={!isWeightReady} onClick={async () => {
+                  if (!isWeightReady) return;
+                  if (sourceKind === "webcam") {
+                    if (liveOverlay) { setLiveOverlay(false); setBoxes([]); return; }
+                    if (webcamOn) { setLiveOverlay(true); return; }
+                    await startWebcam(); setLiveOverlay(true); return;
+                  }
+                  if (sourceKind === "local" && videoUrl) {
+                    if (liveOverlay) { setLiveOverlay(false); try { const v = videoRef.current; if (v) v.pause(); } catch {} } else { setLiveOverlay(true); try { const v = videoRef.current; if (v) await v.play(); } catch {} }
+                    return;
+                  }
+                  const form = new FormData();
+                  if (!imageFiles.length && !imageUrl) return;
+                  const file = imageFiles[0];
+                  form.append("file", file);
+                  const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
+                  const res = await fetch(`${BACKEND_BASE}/predict${q}`, { method: "POST", body: form });
+                  const data = await res.json();
+                  setBoxes(Array.isArray(data?.objects) ? data.objects : []);
+                }}>
+                  {(sourceKind === "local" && videoUrl) || sourceKind === "webcam" ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection") : "Start Object Detection"}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </main>

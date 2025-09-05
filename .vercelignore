@@ -1,0 +1,16 @@
+# Exclude heavy and non-frontend assets from Vercel builds
+backend/
+weights/
+images/
+videos/
+Containerfile
+entrypoint.sh
+run.sh
+run.ps1
+
+# Node modules at root (none expected)
+node_modules/
+
+# Python caches
+**/__pycache__/
+*.pyc

@@ -19,15 +19,16 @@ podman rm -f $ContainerName 2>$null | Out-Null
 
 # Windows paths: no :Z flag
 $weightsHost = Join-Path (Get-Location) "weights"
+$cors = "http://localhost:$FrontendPort,http://127.0.0.1:$FrontendPort"
 
 Write-Host "Starting container $ContainerName on http://localhost:$FrontendPort ..." -ForegroundColor Cyan
 podman run --rm -d `
   -p "$($FrontendPort):$($FrontendPort)" `
   -p "$($BackendPort):8002" `
-  -e FRONTEND_PORT="$FrontendPort" `
-  -e BACKEND_PORT="$BackendPort" `
-  -e FRONTEND_CORS_ORIGIN=("http://localhost:{0},http://127.0.0.1:{0}" -f $FrontendPort) `
-  -v ("{0}:/app/weights" -f $weightsHost) `
+  -e "FRONTEND_PORT=$FrontendPort" `
+  -e "BACKEND_PORT=$BackendPort" `
+  -e "FRONTEND_CORS_ORIGIN=$cors" `
+  -v "${weightsHost}:/app/weights" `
   --name $ContainerName $ImageTag | Out-Null
 
 Write-Host "" 
