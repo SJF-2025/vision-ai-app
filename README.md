@@ -1,5 +1,11 @@
 # VisionAI
 
+## 🌟 Try the Live Demo
+
+**[🚀 Live Demo on GitHub Pages](https://sjf-2025.github.io/vision-ai-app)**
+
+Experience the VisionAI interface with sample images and simulated object detection - no setup required!
+
 ## About
 VisionAI is a simple full‑stack application for running object detection (YOLOv5) right from your browser. The frontend (Next.js + Carbon) lets you select a media source and start detection, while the backend (FastAPI + Ultralytics) loads YOLO weights and returns bounding boxes and labels. Everything is packaged in a Podman container so both services start with a single command.
 
