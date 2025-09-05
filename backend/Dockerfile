@@ -17,8 +17,8 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 # Copy app code
 COPY app /app/app
 
-# Copy model weights (bundle into image)
-COPY ../weights /app/weights
+# Copy model weights (bundle into image). With Cloud Run console, the build context is backend/.
+COPY ./weights /app/weights
 
 # Default model path (can be overridden by env)
 ENV MODEL_PATH=/app/weights/yolov5s.pt
