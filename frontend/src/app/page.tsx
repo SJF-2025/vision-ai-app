@@ -1,24 +1,28 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { FiCamera, FiLink } from "react-icons/fi";
-import { Select, SelectItem, FileUploaderDropContainer, FileUploaderItem, Button, TextInput, FormLabel } from "@carbon/react";
-import { TrashCan } from "@carbon/icons-react";
+import { Select, SelectItem, FileUploaderDropContainer, FileUploaderItem, Button, TextInput, FormLabel, InlineNotification } from "@carbon/react";
+import { TrashCan, View } from "@carbon/icons-react";
 import { CheckmarkFilled } from "@carbon/icons-react";
+import { DEMO_IMAGES, DEMO_WEIGHTS, simulateDetection, type DetectionBox } from "../data/demoData";
 
 export default function Home() {
-  const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_HTTP || "http://localhost:8002";
+  // Demo mode - since we can't run backend on GitHub Pages
+  const IS_DEMO_MODE = true;
+  
   const [imageFiles, setImageFiles] = useState<File[]>([]);
-  const [availableWeights, setAvailableWeights] = useState<string[]>([]);
-  const [selectedWeight, setSelectedWeight] = useState<string>("");
+  const [availableWeights, setAvailableWeights] = useState<string[]>(DEMO_WEIGHTS);
+  const [selectedWeight, setSelectedWeight] = useState<string>("yolov5s.pt");
   const [uploadedWeightName, setUploadedWeightName] = useState<string>("");
   const [imageUrl, setImageUrl] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
-  const [boxes, setBoxes] = useState<{ box: number[]; label: string; confidence: number }[]>([]);
-  const [sourceKind, setSourceKind] = useState<"local" | "snapshot" | "webcam">("local");
+  const [boxes, setBoxes] = useState<DetectionBox[]>([]);
+  const [sourceKind, setSourceKind] = useState<"local" | "snapshot" | "webcam" | "demo">("demo");
   const [snapshotUrl, setSnapshotUrl] = useState<string>("");
-  const [weightSourceKind, setWeightSourceKind] = useState<"local" | "pretrained">("local");
-  const wsRef = useRef<WebSocket | null>(null);
+  const [weightSourceKind, setWeightSourceKind] = useState<"local" | "pretrained">("pretrained");
+  const [selectedDemoImage, setSelectedDemoImage] = useState<string>("");
+  const [isDetecting, setIsDetecting] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -48,43 +52,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const candidates = [
-      process.env.NEXT_PUBLIC_BACKEND_HTTP && `${process.env.NEXT_PUBLIC_BACKEND_HTTP}/weights`,
-      `${BACKEND_BASE}/weights`,
-      "http://127.0.0.1:8002/weights",
-    ].filter(Boolean) as string[];
-
-    let attempts = 0;
-    let timer: any;
-
-    const fetchOnce = async () => {
-      for (const url of candidates) {
-        try {
-          const r = await fetch(url, { cache: "no-store" });
-          if (!r.ok) continue;
-          const d = await r.json();
-          const list = Array.isArray(d?.weights) ? d.weights : [];
-          if (list.length) {
-            setAvailableWeights(list);
-            if (!selectedWeight) setSelectedWeight(list[0]);
-            if (timer) clearInterval(timer);
-            return;
-          }
-        } catch (_) {}
-      }
-    };
-
-    fetchOnce();
-    timer = setInterval(() => {
-      attempts += 1;
-      if (attempts > 10) {
-        clearInterval(timer);
-      } else {
-        fetchOnce();
-      }
-    }, 1500);
-
-    return () => timer && clearInterval(timer);
+    // Demo mode initialization - no backend calls
+    if (IS_DEMO_MODE) {
+      setAvailableWeights(DEMO_WEIGHTS);
+      if (!selectedWeight) setSelectedWeight(DEMO_WEIGHTS[0]);
+    }
   }, []);
 
   useEffect(() => {
@@ -148,6 +120,18 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (sourceKind !== "demo") return;
+    if (selectedDemoImage) {
+      const demoImage = DEMO_IMAGES.find(img => img.id === selectedDemoImage);
+      if (demoImage) {
+        setImageUrl(demoImage.url);
+        setVideoUrl("");
+        setImageFiles([]);
+      }
+    }
+  }, [selectedDemoImage, sourceKind]);
+
+  useEffect(() => {
     if (sourceKind !== "snapshot") return;
     if (snapshotUrl) {
       setImageUrl(snapshotUrl);
@@ -163,8 +147,9 @@ export default function Home() {
 
     if (sourceKind === "local") {
       setSnapshotUrl("");
+      setSelectedDemoImage("");
       stopWebcam();
-      if (imageUrl && !imageUrl.startsWith("blob:")) {
+      if (imageUrl && !imageUrl.startsWith("blob:") && !imageUrl.includes("sample-images")) {
         setImageUrl("");
       }
     } else if (sourceKind === "snapshot") {
@@ -174,6 +159,7 @@ export default function Home() {
       if (videoUrl && videoUrl.startsWith("blob:")) {
         try { URL.revokeObjectURL(videoUrl); } catch {}
       }
+      setSelectedDemoImage("");
       stopWebcam();
       setImageFiles([]);
       setImageUrl("");
@@ -185,9 +171,23 @@ export default function Home() {
       if (videoUrl && videoUrl.startsWith("blob:")) {
         try { URL.revokeObjectURL(videoUrl); } catch {}
       }
+      setSelectedDemoImage("");
       setImageFiles([]);
       setImageUrl("");
       setVideoUrl("");
+    } else if (sourceKind === "demo") {
+      if (imageUrl && imageUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(imageUrl); } catch {}
+      }
+      if (videoUrl && videoUrl.startsWith("blob:")) {
+        try { URL.revokeObjectURL(videoUrl); } catch {}
+      }
+      stopWebcam();
+      setImageFiles([]);
+      setSnapshotUrl("");
+      if (!selectedDemoImage) {
+        setImageUrl("");
+      }
     }
   }, [sourceKind]);
 
@@ -209,39 +209,31 @@ export default function Home() {
   }, [webcamOn]);
 
   useEffect(() => {
+    // Demo mode: simulate live detection for videos/webcam
     if (!(isPlaying && liveOverlay && (sourceKind === "local" || sourceKind === "webcam") && videoRef.current)) return;
+    if (!IS_DEMO_MODE) return; // Skip if not in demo mode
+    
     let cancelled = false;
-    let lastSent = 0;
-    const canvas = document.createElement("canvas");
-    const vid = videoRef.current!;
-    const tick = async () => {
+    let lastDetection = 0;
+    
+    const simulateLiveDetection = async () => {
       if (cancelled) return;
       const now = performance.now();
-      if (now - lastSent < 450) {
-        requestAnimationFrame(tick);
+      if (now - lastDetection < 2000) { // Every 2 seconds
+        setTimeout(simulateLiveDetection, 500);
         return;
       }
-      if (vid.videoWidth && vid.videoHeight) {
-        canvas.width = vid.videoWidth;
-        canvas.height = vid.videoHeight;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-          const blob: Blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b as Blob), "image/jpeg", 0.8)!);
-          const form = new FormData();
-          form.append("file", new File([blob], "frame.jpg", { type: "image/jpeg" }));
-          const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
-          try {
-            const res = await fetch(`${BACKEND_BASE}/predict${q}`, { method: "POST", body: form });
-            const data = await res.json();
-            if (!cancelled) setBoxes(Array.isArray(data?.objects) ? data.objects : []);
-          } catch {}
-        }
-      }
-      lastSent = now;
-      requestAnimationFrame(tick);
+      
+      try {
+        const detections = await simulateDetection();
+        if (!cancelled) setBoxes(detections);
+      } catch {}
+      
+      lastDetection = now;
+      setTimeout(simulateLiveDetection, 500);
     };
-    requestAnimationFrame(tick);
+    
+    setTimeout(simulateLiveDetection, 1000);
     return () => { cancelled = true; };
   }, [isPlaying, liveOverlay, selectedWeight, sourceKind]);
 
@@ -264,6 +256,76 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Failed to start webcam:", err);
+    }
+  };
+
+  const handleDetection = async () => {
+    if (!isWeightReady) return;
+    
+    // Handle webcam
+    if (sourceKind === "webcam") {
+      if (liveOverlay) { 
+        setLiveOverlay(false); 
+        setBoxes([]); 
+        return; 
+      }
+      if (webcamOn) { 
+        setLiveOverlay(true); 
+        return; 
+      }
+      await startWebcam(); 
+      setLiveOverlay(true); 
+      return;
+    }
+    
+    // Handle video
+    if (sourceKind === "local" && videoUrl) {
+      if (liveOverlay) { 
+        setLiveOverlay(false); 
+        try { 
+          const v = videoRef.current; 
+          if (v) v.pause(); 
+        } catch {} 
+      } else { 
+        setLiveOverlay(true); 
+        try { 
+          const v = videoRef.current; 
+          if (v) await v.play(); 
+        } catch {} 
+      }
+      return;
+    }
+    
+    // Handle demo images
+    if (sourceKind === "demo" && selectedDemoImage) {
+      setIsDetecting(true);
+      const demoImage = DEMO_IMAGES.find(img => img.id === selectedDemoImage);
+      if (demoImage) {
+        // Simulate detection delay
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        setBoxes(demoImage.detections);
+      }
+      setIsDetecting(false);
+      return;
+    }
+    
+    // Handle uploaded files (demo mode)
+    if (IS_DEMO_MODE && (imageFiles.length > 0 || imageUrl)) {
+      setIsDetecting(true);
+      try {
+        const detections = await simulateDetection(imageFiles[0]);
+        setBoxes(detections);
+      } catch (error) {
+        console.error('Demo detection failed:', error);
+        setBoxes([]);
+      }
+      setIsDetecting(false);
+      return;
+    }
+    
+    // If we reach here and not in demo mode, show error
+    if (!IS_DEMO_MODE) {
+      alert('Backend connection required for this feature');
     }
   };
 
@@ -294,10 +356,6 @@ export default function Home() {
         videoRef.current.currentTime = 0;
       }
     } catch {}
-    if (wsRef.current) {
-      try { wsRef.current.close(); } catch {}
-      wsRef.current = null;
-    }
     if (imageUrl && imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
     if (videoUrl && videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
     stopWebcam();
@@ -311,6 +369,18 @@ export default function Home() {
 
   return (
     <main style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh - 48px)" }}>
+      {IS_DEMO_MODE && (
+        <section style={{ padding: "16px", background: "#f1f3f4", borderBottom: "1px solid #e0e0e0" }}>
+          <div style={{ maxWidth: "min(1100px, 90vw)", margin: "0 auto" }}>
+            <InlineNotification
+              kind="info"
+              title="Demo Mode"
+              subtitle="This is a demonstration version running on GitHub Pages. Try the sample images below or upload your own for simulated object detection."
+              hideCloseButton
+            />
+          </div>
+        </section>
+      )}
       <section
         style={{
           flex: 1,
@@ -446,6 +516,7 @@ export default function Home() {
                 <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose File Source</h3>
                 <div style={{ marginBottom: 16 }}>
                   <Select id="choose-source-kind" labelText="Source" value={sourceKind} onChange={(e) => setSourceKind(e.target.value as any)}>
+                    <SelectItem text="Demo Images" value="demo" />
                     <SelectItem text="Local File" value="local" />
                     <SelectItem text="Snapshot" value="snapshot" />
                     <SelectItem text="Webcam" value="webcam" />
@@ -454,7 +525,27 @@ export default function Home() {
                 {/* reuse same body from wide layout */}
                 {/* START source body */}
                 <div>
-                  {sourceKind === "local" ? (
+                  {sourceKind === "demo" ? (
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                        <FormLabel style={{ display: "block", marginBottom: 0 }}>Sample Images</FormLabel>
+                        {selectedDemoImage && (
+                          <CheckmarkFilled size={16} aria-hidden="true" style={{ color: "#0f62fe" }} />
+                        )}
+                      </div>
+                      <Select id="demo-image-select" labelText="Choose a sample image" value={selectedDemoImage} onChange={(e) => setSelectedDemoImage(e.target.value)}>
+                        <SelectItem text="Select an image..." value="" />
+                        {DEMO_IMAGES.map(img => (
+                          <SelectItem key={img.id} text={img.name} value={img.id} />
+                        ))}
+                      </Select>
+                      {selectedDemoImage && (
+                        <p style={{ marginTop: 8, fontSize: 12, color: "#525252" }}>
+                          {DEMO_IMAGES.find(img => img.id === selectedDemoImage)?.description}
+                        </p>
+                      )}
+                    </div>
+                  ) : sourceKind === "local" ? (
                     <>
                       <FormLabel style={{ display: "block", marginBottom: 8 }}>File</FormLabel>
                       <FileUploaderDropContainer
@@ -531,10 +622,10 @@ export default function Home() {
                         const form = new FormData();
                         form.append("file", f);
                         try {
-                          await fetch(`${BACKEND_BASE}/upload-weight`, { method: "POST", body: form });
+                          await fetch(`${""}/upload-weight`, { method: "POST", body: form });
                           setUploadedWeightName(f.name);
                           setSelectedWeight(f.name);
-                          const r = await fetch(`${BACKEND_BASE}/weights`, { cache: "no-store" });
+                          const r = await fetch(`${""}/weights`, { cache: "no-store" });
                           if (r.ok) {
                             const d = await r.json();
                             const list = Array.isArray(d?.weights) ? d.weights : [];
@@ -564,27 +655,16 @@ export default function Home() {
                 <p style={{ margin: "0 0 12px", color: "#525252" }}>
                   Start object detection using the selected source and uploaded model weights.
                 </p>
-                <Button kind="primary" size="md" disabled={!isWeightReady} onClick={async () => {
-                  if (!isWeightReady) return;
-                  if (sourceKind === "webcam") {
-                    if (liveOverlay) { setLiveOverlay(false); setBoxes([]); return; }
-                    if (webcamOn) { setLiveOverlay(true); return; }
-                    await startWebcam(); setLiveOverlay(true); return;
-                  }
-                  if (sourceKind === "local" && videoUrl) {
-                    if (liveOverlay) { setLiveOverlay(false); try { const v = videoRef.current; if (v) v.pause(); } catch {} } else { setLiveOverlay(true); try { const v = videoRef.current; if (v) await v.play(); } catch {} }
-                    return;
-                  }
-                  const form = new FormData();
-                  if (!imageFiles.length && !imageUrl) return;
-                  const file = imageFiles[0];
-                  form.append("file", file);
-                  const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
-                  const res = await fetch(`${BACKEND_BASE}/predict${q}`, { method: "POST", body: form });
-                  const data = await res.json();
-                  setBoxes(Array.isArray(data?.objects) ? data.objects : []);
-                }}>
-                  {(sourceKind === "local" && videoUrl) || sourceKind === "webcam" ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection") : "Start Object Detection"}
+                <Button 
+                  kind="primary" 
+                  size="md" 
+                  disabled={!isWeightReady || isDetecting} 
+                  onClick={handleDetection}
+                >
+                  {isDetecting ? "Detecting..." : 
+                   (sourceKind === "local" && videoUrl) || sourceKind === "webcam" ? 
+                     (liveOverlay ? "Stop Live Detection" : "Start Live Detection") : 
+                     "Start Object Detection"}
                 </Button>
               </div>
             </div>
@@ -595,13 +675,34 @@ export default function Home() {
                 <h3 style={{ margin: "0 0 16px", fontWeight: 400, fontSize: 18 }}>1. Choose File Source</h3>
                 <div style={{ marginBottom: 16 }}>
                   <Select id="choose-source-kind" labelText="Source" value={sourceKind} onChange={(e) => setSourceKind(e.target.value as any)}>
+                    <SelectItem text="Demo Images" value="demo" />
                     <SelectItem text="Local File" value="local" />
                     <SelectItem text="Snapshot" value="snapshot" />
                     <SelectItem text="Webcam" value="webcam" />
                   </Select>
                 </div>
                 <div>
-                  {sourceKind === "local" ? (
+                  {sourceKind === "demo" ? (
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                        <FormLabel style={{ display: "block", marginBottom: 0 }}>Sample Images</FormLabel>
+                        {selectedDemoImage && (
+                          <CheckmarkFilled size={16} aria-hidden="true" style={{ color: "#0f62fe" }} />
+                        )}
+                      </div>
+                      <Select id="demo-image-select-wide" labelText="Choose a sample image" value={selectedDemoImage} onChange={(e) => setSelectedDemoImage(e.target.value)}>
+                        <SelectItem text="Select an image..." value="" />
+                        {DEMO_IMAGES.map(img => (
+                          <SelectItem key={img.id} text={img.name} value={img.id} />
+                        ))}
+                      </Select>
+                      {selectedDemoImage && (
+                        <p style={{ marginTop: 8, fontSize: 12, color: "#525252" }}>
+                          {DEMO_IMAGES.find(img => img.id === selectedDemoImage)?.description}
+                        </p>
+                      )}
+                    </div>
+                  ) : sourceKind === "local" ? (
                     <>
                       <FormLabel style={{ display: "block", marginBottom: 8 }}>File</FormLabel>
                       <FileUploaderDropContainer
@@ -677,10 +778,10 @@ export default function Home() {
                         const form = new FormData();
                         form.append("file", f);
                         try {
-                          await fetch(`${BACKEND_BASE}/upload-weight`, { method: "POST", body: form });
+                          await fetch(`${""}/upload-weight`, { method: "POST", body: form });
                           setUploadedWeightName(f.name);
                           setSelectedWeight(f.name);
-                          const r = await fetch(`${BACKEND_BASE}/weights`, { cache: "no-store" });
+                          const r = await fetch(`${""}/weights`, { cache: "no-store" });
                           if (r.ok) {
                             const d = await r.json();
                             const list = Array.isArray(d?.weights) ? d.weights : [];
@@ -710,27 +811,16 @@ export default function Home() {
                 <p style={{ margin: "0 0 12px", color: "#525252" }}>
                   Start object detection using the selected source and uploaded model weights.
                 </p>
-                <Button kind="primary" size="md" disabled={!isWeightReady} onClick={async () => {
-                  if (!isWeightReady) return;
-                  if (sourceKind === "webcam") {
-                    if (liveOverlay) { setLiveOverlay(false); setBoxes([]); return; }
-                    if (webcamOn) { setLiveOverlay(true); return; }
-                    await startWebcam(); setLiveOverlay(true); return;
-                  }
-                  if (sourceKind === "local" && videoUrl) {
-                    if (liveOverlay) { setLiveOverlay(false); try { const v = videoRef.current; if (v) v.pause(); } catch {} } else { setLiveOverlay(true); try { const v = videoRef.current; if (v) await v.play(); } catch {} }
-                    return;
-                  }
-                  const form = new FormData();
-                  if (!imageFiles.length && !imageUrl) return;
-                  const file = imageFiles[0];
-                  form.append("file", file);
-                  const q = selectedWeight ? `?weight=${encodeURIComponent(selectedWeight)}` : "";
-                  const res = await fetch(`${BACKEND_BASE}/predict${q}`, { method: "POST", body: form });
-                  const data = await res.json();
-                  setBoxes(Array.isArray(data?.objects) ? data.objects : []);
-                }}>
-                  {(sourceKind === "local" && videoUrl) || sourceKind === "webcam" ? (liveOverlay ? "Stop Live Detection" : "Start Live Detection") : "Start Object Detection"}
+                <Button 
+                  kind="primary" 
+                  size="md" 
+                  disabled={!isWeightReady || isDetecting} 
+                  onClick={handleDetection}
+                >
+                  {isDetecting ? "Detecting..." : 
+                   (sourceKind === "local" && videoUrl) || sourceKind === "webcam" ? 
+                     (liveOverlay ? "Stop Live Detection" : "Start Live Detection") : 
+                     "Start Object Detection"}
                 </Button>
               </div>
             </div>
