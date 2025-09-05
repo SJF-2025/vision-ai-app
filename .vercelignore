@@ -1,5 +1,4 @@
 # Exclude heavy and non-frontend assets from Vercel builds
-backend/
 weights/
 images/
 videos/
